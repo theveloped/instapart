@@ -1,0 +1,129 @@
+{
+  "messages": [], 
+  "timestamp": "2020-07-05T16:15:39.659521+00:00", 
+  "tree": {
+    "components": [], 
+    "count": 1, 
+    "id": 1669947546406377, 
+    "index": 0, 
+    "is_assembly": false, 
+    "is_component": false, 
+    "is_compound": false, 
+    "is_free": true, 
+    "is_reference": false, 
+    "is_shape": true, 
+    "is_simple": true, 
+    "level": 0, 
+    "messages": [], 
+    "name": "_Unsaved_", 
+    "orientation": [
+      0.0, 
+      0.0, 
+      1.0, 
+      0.0
+    ], 
+    "reference": 0, 
+    "root": null, 
+    "shapes": [
+      {
+        "area": 28915.773921064385, 
+        "bends": [], 
+        "features": [
+          {
+            "bottom": false, 
+            "top": true, 
+            "type": "EXTRUSION", 
+            "value": 2.2888183991653932e-05
+          }
+        ], 
+        "files": [
+          {
+            "path": "./examples/3dhubs/flat_with_curves_1/_Unsaved_.dxf"
+          }
+        ], 
+        "height": 226.4403993269622, 
+        "length": 10.00000200000008, 
+        "messages": [
+          {
+            "code": 3, 
+            "description": "Volume difference after flattening 93533.16mm^3", 
+            "value": 93533.15951121123
+          }
+        ], 
+        "pattern": {
+          "bends": [], 
+          "contour": {
+            "centroid": null, 
+            "path": [
+              [
+                0.0, 
+                8.633974
+              ], 
+              [
+                0.0, 
+                4.0, 
+                0.4142135623730951
+              ], 
+              [
+                2.0, 
+                2.0
+              ], 
+              [
+                8.0, 
+                2.0, 
+                0.4142135623730951
+              ], 
+              [
+                10.0, 
+                4.0
+              ], 
+              [
+                10.0, 
+                8.633974, 
+                -0.4142135623731689
+              ], 
+              [
+                9.633975, 
+                9.999999
+              ], 
+              [
+                0.366025, 
+                9.999999, 
+                -0.4142135623730345
+              ], 
+              [
+                -0.0, 
+                8.633974
+              ], 
+              [
+                0.0, 
+                8.633974
+              ]
+            ], 
+            "radius": null, 
+            "type": "PATH"
+          }, 
+          "height": 8.205979747066891, 
+          "holes": [], 
+          "label": {}, 
+          "origin": [
+            -0.164785, 
+            1.835215
+          ], 
+          "other": null, 
+          "thickness": 9.999977111816008, 
+          "width": 10.32956900117955
+        }, 
+        "section": null, 
+        "type": "SHEET", 
+        "volume": 94305.2815383965, 
+        "width": 195.45504032776915
+      }
+    ], 
+    "translation": [
+      0.0, 
+      0.0, 
+      0.0
+    ]
+  }
+}

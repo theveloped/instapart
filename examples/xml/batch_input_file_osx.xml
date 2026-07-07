@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<BatchUnfoldInput>
+    <KFactor>0.5</KFactor>
+    <MaxPartThickness>25</MaxPartThickness>
+    <MaxBendRadius>15</MaxBendRadius>
+    <DefaultMaterial>DD11</DefaultMaterial >
+    <OutputFolder>/Users/tobias/Desktop/smartpart project/instapart/temp/</OutputFolder>
+    <InputFiles>
+        <string>/Users/tobias/Desktop/smartpart project/instapart/examples/xml/DOS-A02-p01-R1.STEP</string>
+        <string>/Users/tobias/Desktop/smartpart project/instapart/examples/xml/DOS-Rol-A01-P01.STEP</string>
+        <string>/Users/tobias/Desktop/smartpart project/instapart/examples/xml/DOS-Rol-A02-P01.STEP</string>
+        <string>/Users/tobias/Desktop/smartpart project/instapart/examples/xml/DOS-Rol-A03-P01.STEP</string>
+        <string>/Users/tobias/Desktop/smartpart project/instapart/examples/xml/DOS-Rol-A05-P01.STEP</string>
+        <string>/Users/tobias/Desktop/smartpart project/instapart/examples/xml/DOS-Rol-A05-P02.STEP</string>
+        <string>/Users/tobias/Desktop/smartpart project/instapart/examples/xml/DOS-Rol-A05-P03.STEP</string>
+        <string>/Users/tobias/Desktop/smartpart project/instapart/examples/xml/DOS-MIN-A14-P13.STEP</string>
+        <string>/Users/tobias/Desktop/smartpart project/instapart/examples/xml/EMO-65-13-301.STEP</string>
+    </InputFiles>
+</BatchUnfoldInput>

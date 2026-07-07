@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<BatchUnfoldInput>
+    <KFactor>0.5</KFactor>
+    <MaxPartThickness>25</MaxPartThickness>
+    <MaxBendRadius>15</MaxBendRadius>
+    <DefaultMaterial>DD11</DefaultMaterial >
+    <OutputFolder>C:\Users\Tobias\Desktop\instapart\temp</OutputFolder>
+    <InputFiles>
+        <string>C:\Users\Tobias\Desktop\instapart\examples\assy\180508-163901 assbly ffmb.stp</string>
+        <string>C:\Users\Tobias\Desktop\instapart\examples\parts\SmartPart_10.stp</string>
+    </InputFiles>
+</BatchUnfoldInput>

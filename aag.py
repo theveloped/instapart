@@ -1,0 +1,2048 @@
+#!/usr/bin/env python
+
+# compatibility imports
+from __future__ import print_function
+
+import os
+import sys
+import math
+# import numpy
+import networkx as nx
+from enum import Enum
+
+from OCC.IFSelect import IFSelect_RetDone
+from OCC.ShapeFix import ShapeFix_Shape, ShapeFix_Wire, ShapeFix_Edge
+from OCC.ShapeAnalysis import ShapeAnalysis_FreeBounds_ConnectEdgesToWires, ShapeAnalysis_WireOrder
+from OCC.GCPnts import GCPnts_AbscissaPoint_Length
+from OCC.CPnts import CPnts_UniformDeflection
+from OCC.GeomAdaptor import GeomAdaptor_Curve
+from OCC.GeomProjLib import geomprojlib_Project
+from OCC.BRep import BRep_Tool_Surface
+from OCC.IFSelect import IFSelect_ItemsByEntity
+
+from OCC.Bnd import Bnd_Box
+from OCC.BRepBndLib import brepbndlib_Add
+from OCC.BRepBuilderAPI import (BRepBuilderAPI_Transform,
+                                BRepBuilderAPI_GTransform,
+                                BRepBuilderAPI_MakeEdge,
+                                BRepBuilderAPI_MakeWire,
+                                BRepBuilderAPI_MakeFace,
+                                BRepBuilderAPI_MakeVertex,
+                                BRepBuilderAPI_Sewing,
+                                BRepBuilderAPI_MakeSolid)
+
+from OCC.BRepPrimAPI import BRepPrimAPI_MakePrism
+from OCC.STEPControl import STEPControl_Reader
+from OCC.TopAbs import (TopAbs_VERTEX, TopAbs_EDGE, TopAbs_FACE, TopAbs_WIRE,
+                        TopAbs_SHELL, TopAbs_SOLID, TopAbs_COMPOUND, TopAbs_COMPSOLID)
+from OCC.TopoDS import topods_Solid, topods_Shell, topods_Face, topods_Wire, topods_Edge, topods_Vertex
+from OCC.GProp import GProp_GProps
+from OCC.BRepGProp import brepgprop_VolumeProperties, brepgprop_SurfaceProperties
+
+from OCC.gp import (gp_Trsf, gp_Ax1, gp_Pln,
+                    gp_Ax3, gp_GTrsf, gp_Vec,
+                    gp_Dir, gp_Pnt, gp_Origin,
+                    gp_DZ, gp_Ax2d, gp_Pnt2d,
+                    gp_Dir2d, gp_XY,
+                    gp_Vec2d, gp_DX, gp_Lin,
+                    gp_GTrsf2d, gp_Mat, gp_Trsf2d,
+                    gp_Mat2d)
+
+from OCC.BRep import BRep_Tool, BRep_Tool_Surface
+from OCC.ShapeAnalysis import ShapeAnalysis_Surface, ShapeAnalysis_Curve,  ShapeAnalysis_Edge
+from OCC.GeomLProp import GeomLProp_SLProps
+
+from OCC.BRepAdaptor import BRepAdaptor_Curve
+from OCC.BRepLProp import BRepLProp_CLProps
+from OCC.GeomLib import GeomLib_IsPlanarSurface, geomlib
+
+from OCC.BRepTools import breptools_UVBounds, breptools_OuterWire
+from OCC.BRepAdaptor import BRepAdaptor_Surface
+
+from OCC.TopExp import TopExp_Explorer, topexp
+from OCC.Geom import Geom_Line
+from OCC.GeomAPI import GeomAPI_IntCS, GeomAPI_ProjectPointOnCurve
+from OCC.Geom2dAPI import Geom2dAPI_ProjectPointOnCurve
+
+from cycad import Pattern, Entity
+
+# utils
+from utils import import_step
+
+import logging
+logger = logging.getLogger()
+
+#===========================================================================
+# Global default settings
+#===========================================================================
+HASH_INTEGER = 1000000000
+TOLLERANCE = 1e-6
+
+#===========================================================================
+# Helper functions from PythonOCC-Utils
+#===========================================================================
+def fix_shape(shp, tolerance=1e-3):
+    fix = ShapeFix_Shape(shp)
+    fix.SetFixFreeShellMode(True)
+    sf = fix.FixShellTool().GetObject()
+    sf.SetFixOrientationMode(True)
+    fix.LimitTolerance(tolerance)
+    fix.Perform()
+    return fix.Shape()
+
+def fix_edge(edge):
+    fix = ShapeFix_Edge()
+    fix.FixAddCurve3d(edge)
+    return edge
+
+
+def get_area(shape):
+    """
+    Compute area of face
+    """
+    props = GProp_GProps()
+    brepgprop_SurfaceProperties(shape, props)
+    return props.Mass()
+
+
+def get_volume(shape):
+    """
+    Compute volume of solid
+    """
+    props = GProp_GProps()
+    brepgprop_VolumeProperties(shape, props)
+    return props.Mass()
+
+
+# def import_step(step_path):
+#     """
+#     Import step file
+#     """
+#     step_reader = STEPControl_Reader()
+#     status = step_reader.ReadFile(step_path)
+
+#     if status == IFSelect_RetDone:
+#         fails_only = False
+#         # step_reader.PrintCheckLoad(fails_only, IFSelect_ItemsByEntity)
+#         # step_reader.PrintCheckTransfer(fails_only, IFSelect_ItemsByEntity)
+
+#         if not step_reader.TransferRoot(1):
+#             raise RuntimeError('Can not transfer root')
+#         number_of_shapes = step_reader.NbShapes()
+#         if number_of_shapes > 0:
+#             return step_reader.Shape(1)
+#         else:
+#             raise RuntimeError('The input STEP file does not have shapes')
+#     else:
+#         raise RuntimeError('Can not read {0} file'.format(step_path))
+
+
+def extrude_face(face, vector):
+    """
+    Extrude a face alomg vector
+    """
+    return BRepPrimAPI_MakePrism(face, vector).Shape()
+
+def pcurve(edge, face):
+    """
+    computes the 2d parametric spline that lies on the surface of the face
+    :return: Geom2d_Curve, u, v
+    """
+    crv, u, v = BRep_Tool().CurveOnSurface(edge, face)
+    return crv.GetObject(), u, v
+
+
+def mean(numbers):
+    """
+    Compute mean of a list
+    """
+    return float(sum(numbers)) / max(len(numbers), 1)
+
+
+def domain(face):
+    '''the u,v domain of the curve
+    :return: UMin, UMax, VMin, VMax
+    '''
+    return breptools_UVBounds(face)
+
+
+def mid_point(face):
+    """
+    :return: the parameter at the mid point of the face,
+    and its corresponding gp_Pnt
+    """
+    u_min, u_max, v_min, v_max = domain(face)
+    u_mid = (u_min + u_max) / 2.
+    v_mid = (v_min + v_max) / 2.
+
+    adaptor = BRepAdaptor_Surface(face)
+    return adaptor.Value(u_mid, v_mid)
+
+
+def wire_edge_pairs(wire, label=None):
+    """
+    :return: generator of ordered edges in a wire. edges are grouped
+    in concecutive pairs and their respective wire_hash
+    """
+    if wire.Orientation() != 0:
+        wire.Reverse()
+
+    edge_explorer = TopExp_Explorer(wire, TopAbs_EDGE)
+
+    first_edge = topods_Edge(edge_explorer.Current())
+    prev_edge = first_edge
+    edge_explorer.Next()
+
+    while edge_explorer.More():
+        current_edge = topods_Edge(edge_explorer.Current())
+
+        yield (prev_edge, current_edge, label)
+        prev_edge = current_edge
+        edge_explorer.Next()
+
+    # Return first edge
+    yield (prev_edge, first_edge, label)
+
+
+def face_edge_pairs(face_shape):
+    """
+    :return: generator of ordered edges belonging to wires
+    of a face. edges are grouped in concecutive pairs and
+    their respective wire_hash
+    """
+    outer_wire = breptools_OuterWire(face_shape)
+    wire_explorer = TopExp_Explorer(face_shape, TopAbs_WIRE)
+
+    # Return out wire
+    wire_hash = outer_wire.HashCode(HASH_INTEGER)
+    for edge_pair in wire_edge_pairs(outer_wire, label=wire_hash):
+        yield edge_pair
+
+    # Return iner wires
+    while wire_explorer.More():
+        current_wire = topods_Wire(wire_explorer.Current())
+
+        # If inner wire return
+        if not current_wire.IsSame(outer_wire):
+            wire_hash = current_wire.HashCode(HASH_INTEGER)
+
+            # Return all pairs
+            for edge_pair in wire_edge_pairs(current_wire, label=wire_hash):
+                yield edge_pair
+
+        wire_explorer.Next()
+
+
+def edge_end_vertices(edge_shape, ignore_orientation=False):
+    """
+    :return: first and last verticies of an edge
+    """
+    first_vertex = topexp.FirstVertex(edge_shape)
+    last_vertex = topexp.LastVertex(edge_shape)
+
+    if edge_shape.Orientation() != 0 and not ignore_orientation:
+        first_vertex, last_vertex = last_vertex, first_vertex
+
+    return first_vertex, last_vertex
+
+
+def wire_edges(wire_shape, ignore_orientation=False):
+    """
+    :return: generator of ordered edges in a wire and if edge is first of a wire
+    """
+    # reversed_wire = False
+    is_reversed = (wire_shape.Orientation() != 0)
+    if is_reversed and not ignore_orientation:
+        wire_shape.Reverse()
+        reversed_wire = True
+
+    is_first = True
+    edge_explorer = TopExp_Explorer(wire_shape, TopAbs_EDGE)
+    while edge_explorer.More():
+        current_edge = topods_Edge(edge_explorer.Current())
+
+        yield (current_edge, is_first, is_reversed)
+
+        # if reversed_wire:
+        #     current_edge.Reverse()
+        #     yield (current_edge, is_first)
+        # else:
+        #     yield (current_edge, is_first)
+
+        edge_explorer.Next()
+        is_first = False
+
+
+def face_edges(face_shape, ignore_orientation=False):
+    """
+    :return: generator of ordered edges in a face
+    """
+    wire_explorer = TopExp_Explorer(face_shape, TopAbs_WIRE)
+
+    while wire_explorer.More():
+        current_wire = topods_Wire(wire_explorer.Current())
+
+        # Return all pairs
+        for current_edge, is_first, is_reversed in wire_edges(current_wire, ignore_orientation=ignore_orientation):
+            yield (current_edge, is_first, is_reversed)
+
+        wire_explorer.Next()
+
+
+def first_edge_point(edge):
+    """
+    :return: first vertex of an edge as gp_Pnt
+    (ignoring edge orientation)
+    """
+    first_vertex = topexp.FirstVertex(edge)
+    return BRep_Tool.Pnt(first_vertex)
+
+
+def last_edge_point(edge):
+    """
+    :return: last vertex of an edge as gp_Pnt
+    (ignoring edge orientation)
+    """
+    last_vertex = topexp.LastVertex(edge)
+    return BRep_Tool.Pnt(last_vertex)
+
+
+def face_surface_handle(face):
+    """
+    :return: surface handle belonging to a face
+    """
+    return BRep_Tool_Surface(face)
+
+
+def face_surface(surface_handle):
+    """
+    :return: surface by surface handle
+    """
+    return surface_handle.GetObject()
+
+
+def point_to_parameter(point, surface_handle, TOLLERANCE=TOLLERANCE):
+    """
+    :return: uv coordinates of a point with respect to the surface
+    specified by it's surface handle
+    """
+    shape_analysis = ShapeAnalysis_Surface(surface_handle)
+    uv = shape_analysis.ValueOfUV(point, TOLLERANCE)
+    return uv.Coord()
+
+
+def continuity_edge_face(edge, face_a, face_b):
+    """
+    :return: Continuity between two adjacent faces along a given edge
+    """
+    tool = BRep_Tool()
+    if tool.HasContinuity(edge, face_a, face_b):
+        return True, 1
+
+    else:
+        return False, None
+
+
+def calculating_normal_on_edge(face, edge):
+    """
+    :return: Normal vector on a face at the first point of the specified edge
+    """
+    first_point = first_edge_point(edge)
+    surface_handle = face_surface_handle(face)
+    uv_point = point_to_parameter(first_point, surface_handle)
+
+    props = FaceProperties(surface_handle, uv_point)
+    normal = props.normal()
+
+    if face.Orientation() != 0:
+        normal.Reverse()
+
+    return normal
+
+
+def calculating_normal_at_point(face, point):
+    """
+    :return: Normal vector on a face at a given point
+    """
+    surface_handle = face_surface_handle(face)
+    uv_point = point_to_parameter(point, surface_handle)
+
+    props = FaceProperties(surface_handle, uv_point)
+    normal = props.normal()
+
+    if face.Orientation() != 0:
+        normal.Reverse()
+
+    return normal
+
+
+def face_normal(face):
+    """
+    :return: Normal vector of a planar face
+    """
+    surface_handle = face_surface_handle(face)
+    props = FaceProperties(surface_handle)
+    normal = props.normal()
+
+    if face.Orientation() != 0:
+        normal.Reverse()
+
+    return normal
+
+
+def edge_tangent(edge, ignore_orientation=False):
+    """
+    :return: Tangent vector along an edge
+    """
+    edge_props = EdgeProperties(edge, use_first=(edge.Orientation != 0))
+    tangent = edge_props.tangent()
+
+    # Reverse if edge has reversed orientation
+    if edge.Orientation() == 0 and not ignore_orientation:
+        tangent.Reverse()
+
+    return tangent
+
+
+def bend_allowance(angle, inner_radius, thickness, k_factor):
+    return angle * (inner_radius + thickness * k_factor)
+
+
+def radius_allowance(angle, original_radius, new_radius):
+    length = (new_radius - original_radius) / math.tan(angle / 2.)
+    return 2 * length
+
+
+#===========================================================================
+# Helper class for edge properties
+#===========================================================================
+class EdgeProperties(object):
+    def __init__(self, edge, use_first=True, TOLLERANCE=TOLLERANCE):
+        curve_adaptor = BRepAdaptor_Curve(edge)
+        self._props = BRepLProp_CLProps(curve_adaptor, 2, TOLLERANCE)
+
+        if use_first:
+            self._props.SetParameter(curve_adaptor.FirstParameter())
+        else:
+            self._props.SetParameter(curve_adaptor.LastParameter())
+
+    def tangent(self):
+        if self._props.IsTangentDefined():
+            tangent_dir = gp_Dir()
+            self._props.Tangent(tangent_dir)
+            return gp_Vec(tangent_dir)
+        else:
+            raise ValueError('no tangent defined')
+
+
+#===========================================================================
+# Helper class for face properties
+#===========================================================================
+class FaceProperties(object):
+    def __init__(self, surface_handle, uv_point=[-1, -1], TOLLERANCE=TOLLERANCE):
+        self._props = GeomLProp_SLProps(surface_handle, uv_point[0], uv_point[1], 2, TOLLERANCE)
+
+    def directions(self):
+        dU, dV = gp_Dir(), gp_Dir()
+        if self._props.IsTangentUDefined() and self._props.IsTangentVDefined():
+            self._props.TangentU(dU), self._props.TangentV(dV)
+
+        return dU, dV
+
+    def curvature(self):
+        return self._props.MeanCurvature()
+
+    def radii(self):
+        dU = self._props.D2U().Magnitude()
+        dV = self._props.D2V().Magnitude()
+
+        return (dU, dV)
+
+    def normal(self):
+        if self._props.IsNormalDefined():
+            normal_dir = self._props.Normal()
+            return gp_Vec(normal_dir)
+        else:
+            raise ValueError('normal is not defined at this u,v')
+
+
+#===========================================================================
+# Enumerator to define face shape (currently all are cast to: CONVEX, CONCAVE or PLANAR)
+#===========================================================================
+class FaceTypes(Enum):
+        CONVEX = -1
+        PLANAR = 0
+        CONCAVE = 1
+        COMPLEX = 2
+
+
+def is_planar(surface_handle, TOLLERANCE=TOLLERANCE):
+    """
+    :return: True if a given surface is planar
+    """
+    is_planar_surface = GeomLib_IsPlanarSurface(surface_handle, TOLLERANCE)
+    return is_planar_surface.IsPlanar()
+
+
+def face_convexity(face, TOLLERANCE=TOLLERANCE):
+    """
+    :return: face type and (mean) curvature are given for a given face
+
+    TODO: face properties should be elaborated upon to properly handle
+    non-uniform curvatures along a face
+    """
+    surface_handle = face_surface_handle(face)
+    is_planar_surface = GeomLib_IsPlanarSurface(surface_handle, TOLLERANCE)
+
+    if is_planar_surface.IsPlanar():
+        return (FaceTypes.PLANAR, 0.0, [None, None], [None, None])
+
+    props = FaceProperties(surface_handle)
+    curvature = props.curvature()
+    radii = props.radii()
+    directions = props.directions()
+
+    if abs(curvature) < TOLLERANCE:
+        return (FaceTypes.PLANAR, 0.0, [None, None], [None, None])
+
+    if abs(radii[0]) > TOLLERANCE and abs(radii[1]) > TOLLERANCE:
+        return (FaceTypes.COMPLEX, curvature, radii, directions)
+
+    # if face.Convex():
+    if curvature > 0:
+        if face.Orientation() != 0:
+            return (FaceTypes.CONVEX, curvature, radii, directions)
+        else:
+            return (FaceTypes.CONCAVE, curvature, radii, directions)
+
+    else:
+        if face.Orientation() != 0:
+            return (FaceTypes.CONCAVE, curvature, radii, directions)
+        else:
+            return (FaceTypes.CONVEX, curvature, radii, directions)
+
+
+#===========================================================================
+# Main class for generating and using the attributed adjacency graph of a shape
+#===========================================================================
+class AdjacencyGraph(object):
+
+    class EdgeTypes(Enum):
+        CONVEX = -1
+        SMOOTH = 0
+        CONCAVE = 1
+
+    # class FaceTypes(Enum):
+    #     CONVEX = -1
+    #     PLANAR = 0
+    #     CONCAVE = 1
+
+    def __init__(self, shape, TOLLERANCE=1e-6):
+        self.shape = shape
+        self.TOLLERANCE = TOLLERANCE
+
+        # Face graphs stored as networkX graphs
+        # Graph nodes in the graph represent shape faces
+        # Graph edges in the graph represent shape edges
+        self.C0_faces = None # Nodes/Faces are connected if adjecent
+        self.C1_faces = None # Nodes/Faces are connected only if continuity is higher than C0
+        self.C2_faces = None # Nodes/Faces are connected only if continuity is higher than C1
+
+        # Edge graphs stored as networkX graphs
+        # Graph nodes in the graph represent shape vertices
+        # Graph edges in the graph represent shape edges
+        self.C0_edges = None
+        self.C1_edges = None
+        self.C2_edges = None
+
+        self.areas = []
+
+
+    def edge_continuity(self, edge, node_a, node_b):
+        """
+        :return: return the degree of continuity of two nodes along an edge
+        """
+        tool = BRep_Tool()
+        if tool.HasContinuity(edge, node_a["shape"], node_b["shape"]):
+            if abs(node_a["curvature"] - node_b["curvature"]) <= self.TOLLERANCE:
+                if node_a["convexity"] == FaceTypes.COMPLEX or node_b["convexity"] == FaceTypes.COMPLEX:
+                    return -2
+                else:
+                    return 2
+            else:
+                if node_a["convexity"] == FaceTypes.COMPLEX or node_b["convexity"] == FaceTypes.COMPLEX:
+                    return -1
+                else:
+                    return 1
+
+        else:
+            return 0
+
+
+    def full(self):
+        """
+        Compute the full adjacency graph with any continuity degree
+        """
+        if self.C0_faces:
+            return self.C0_faces
+
+        else:
+            self.C0_faces = nx.Graph()
+            self.C0_edges = nx.MultiGraph()
+            self.build_graphs(self.C0_faces, self.C0_edges, min_continuity=0)
+
+
+    def smooth(self):
+        """
+        Compute the adjacency graph with a C1/C2 continuity degree
+        """
+        if self.C1_faces:
+            return self.C1_faces
+
+        else:
+            self.C1_faces = nx.Graph()
+            self.C1_edges = nx.MultiGraph()
+            self.build_graphs(self.C1_faces, self.C1_edges, min_continuity=1)
+
+
+    def grouped(self):
+        """
+        Compute the adjacency graph with a C2 continuity degree
+        """
+        if self.C2_faces:
+            return self.C2_faces
+
+        else:
+            self.C2_faces = nx.Graph()
+            self.C2_edges = nx.MultiGraph()
+            self.build_graphs(self.C2_faces, self.C2_edges, min_continuity=2)
+
+
+    def build_graphs(self, graph_faces, graph_edges, min_continuity=0):
+        """
+        Compute the adjacency graph with given minimal continuity degree
+        """
+        edge_edges = []
+        solid_explorer = TopExp_Explorer(self.shape, TopAbs_FACE)
+        while solid_explorer.More():
+            face = topods_Face(solid_explorer.Current())
+            face_hash = face.HashCode(HASH_INTEGER)
+            solid_explorer.Next()
+
+            # areas of faces
+            face_area = abs(get_area(face))
+            self.areas.append((face_area, face_hash))
+
+            # add face + attributes to graph
+            convexity, curvature, radii, directions = face_convexity(face)
+            graph_faces.add_node(face_hash, shape=face, convexity=convexity, curvature=curvature, radii=radii, directions=directions, bend_radius=None, k_factor=None)
+            face_node = graph_faces.node[face_hash]
+
+            # Loop over all edges of current face
+            for edge, is_first, is_reversed in face_edges(face, ignore_orientation=False):
+                edge_hash = edge.HashCode(HASH_INTEGER)
+
+                first_vertex, last_vertex = edge_end_vertices(edge, ignore_orientation=False)
+                first_hash = first_vertex.HashCode(HASH_INTEGER)
+                last_hash = last_vertex.HashCode(HASH_INTEGER)
+
+                # Add the first vertex to the edge graph
+                if is_first and not graph_edges.has_node(first_hash):
+                    graph_edges.add_node(first_hash, shape=first_vertex)
+
+                # Add unique vertices to edge graph
+                if not graph_edges.has_node(last_hash):
+                    graph_edges.add_node(last_hash, shape=last_vertex)
+
+                # Handle first face adjacent to edge
+                if not graph_edges.has_edge(first_hash, last_hash, key=edge_hash):
+                    graph_edges.add_edge(first_hash, last_hash, key=edge_hash, faces=[face], shape=edge, flattened=None)
+
+                # Handle second face adjacent to edge
+                else:
+                    other_face = graph_edges[first_hash][last_hash][edge_hash]["faces"][0]
+                    other_face_hash = other_face.HashCode(HASH_INTEGER)
+                    other_face_node = graph_faces.node[other_face_hash]
+                    edge_continuity = self.edge_continuity(edge, face_node, other_face_node)
+
+                    # Add face and loop data to edge adjecency graph
+                    graph_edges[first_hash][last_hash][edge_hash]["faces"].append(face)
+                    graph_edges[first_hash][last_hash][edge_hash]["continuity"] = edge_continuity
+
+                    # Continue if continuity doesn't suffice
+                    if abs(edge_continuity) < min_continuity:
+                        continue
+
+                    # Handle smooth faces
+                    elif abs(edge_continuity) >= 1:
+                        edge_convexity = self.EdgeTypes.SMOOTH
+                        edge_angle = 0.0
+                        # display.DisplayShape(edge, update=True, color="green")
+
+                    # Handle non-smooth faces
+                    else:
+                        if is_reversed:
+                            edge.Reverse()
+
+                        normal_a = calculating_normal_on_edge(other_face, edge)
+                        normal_b = calculating_normal_on_edge(face, edge)
+                        tangent = edge_tangent(edge)
+
+                        # if is_reversed:
+                        #     tangent.Reverse()
+
+                        # compute dihedral_angle
+                        edge_angle = normal_b.AngleWithRef(normal_a, tangent)
+
+                        # if is_reversed:
+                        #     edge_angle *= -1
+
+                        if edge_angle > 0.0:
+                            edge_convexity = self.EdgeTypes.CONCAVE
+                            # display.DisplayShape(edge, update=True, color="red")
+
+                        else:
+                            edge_convexity = self.EdgeTypes.CONVEX
+                            # display.DisplayShape(edge, update=True, color="blue")
+
+                    graph_faces.add_edge(other_face_hash, face_hash, angle=edge_angle, continuity=edge_continuity, convexity=edge_convexity, hash=edge_hash, shape=edge)
+                    graph_edges[first_hash][last_hash][edge_hash]["angle"] = edge_angle
+                    graph_edges[first_hash][last_hash][edge_hash]["convexity"] = edge_convexity
+
+
+    def get_connected_subgraph(self, base_hash, ignore_complex=False, display=False):
+        """
+        :return: subgraph of the given graph composed of all nodes
+        that are connected to the base node
+        """
+        component = nx.node_connected_component(self.C1_faces, base_hash)
+
+        # Remove faces with complex convexity
+        if ignore_complex:
+            complex_hashes = []
+
+            for node_hash in component:
+                node = self.C1_faces.node[node_hash]
+
+                if node["convexity"] == FaceTypes.COMPLEX and display:
+                    logger.debug("Removing {} becouse it is a complex face".format(node_hash))
+                    complex_hashes.append(node_hash)
+                    display.DisplayShape(node["shape"], update=True, color="red")
+
+            for node_hash in complex_hashes:
+                component.remove(node_hash)
+
+            sub_graph = self.C1_faces.subgraph(component)
+            component = nx.node_connected_component(sub_graph, base_hash)
+
+        sub_graph = self.C1_faces.subgraph(component)
+
+        if display:
+            for node_hash in sub_graph.nodes():
+                node = self.C1_faces.node[node_hash]
+
+                if node["convexity"] != FaceTypes.PLANAR:
+                    display.DisplayShape(node["shape"], update=True, color="green")
+                # else:
+                #     display.DisplayShape(node["shape"], update=True, color="red")
+
+        return sub_graph
+
+
+    def get_formed_components(self, base_hash, display=False):
+        """
+        :return: components of the given graph composed of all nodes
+        that are are curved in 2 directions
+        """
+        component = nx.node_connected_component(self.C1_faces, base_hash)
+        sub_graph = self.C1_faces.subgraph(component)
+
+        if display:
+            for node_hash in sub_graph.nodes():
+                node = self.C1_faces.node[node_hash]
+
+                if node["convexity"] != FaceTypes.PLANAR:
+                    display.DisplayShape(node["shape"], update=True, color="green")
+                else:
+                    display.DisplayShape(node["shape"], update=True, color="red")
+
+        return sub_graph
+
+
+    def extract_wires(self, graph, surface_handle, thickness, transformations=[], k_factor=0.5):
+        """
+        :return: create ordered wires of all connected edges by removing the seams.
+        Tranformations can be passed and applied to edges before they are joined to
+        a wire.
+        """
+        wires = []
+        used_edge_hashes = set()
+
+        # Loop over all nodes (faces) in the graph
+        for node_hash in graph.nodes():
+                node = graph.node[node_hash]
+                node_scale = self.node_scale(node, thickness, k_factor=k_factor)
+
+                # Loop over all edges, with internal wires grouped
+                for edge, is_first, is_reversed in face_edges(node["shape"]):
+                    edge_hash = edge.HashCode(HASH_INTEGER)
+
+                    if edge_hash in used_edge_hashes:
+                        continue
+
+                    # Potential start edge
+                    first_vertex, start_vertex = edge_end_vertices(edge, ignore_orientation=True)
+                    first_vertex_hash = first_vertex.HashCode(HASH_INTEGER)
+                    start_vertex_hash = start_vertex.HashCode(HASH_INTEGER)
+
+                    # Wire is allready closed (circle, etc.)
+                    if first_vertex_hash == start_vertex_hash:
+                        local_edge = self.transformed_edge(edge, node["shape"], surface_handle, scale=node_scale, transformations=transformations[node_hash])
+                        wire_builder = BRepBuilderAPI_MakeWire()
+                        wire_builder.Add(local_edge)
+                        wire = wire_builder.Wire()
+                        wires.append(wire)
+                        continue
+
+                    # Continue if wire needs to be closed manually
+                    edge_node = self.C1_edges[first_vertex_hash][start_vertex_hash][edge_hash]
+
+                    # Has two faces (not a seam) and is not smooth edge
+                    if len(edge_node["faces"]) < 2 or edge_node["continuity"] > 0:
+                        used_edge_hashes.add(edge_hash)
+                        continue
+
+                    # Has two faces (not a seam) and is not smooth edge
+                    else:
+                        wire_builder = BRepBuilderAPI_MakeWire()
+                        local_start_vertex = self.transformed_vertex(start_vertex, node["shape"], surface_handle, scale=node_scale, transformations=transformations[node_hash])
+                        local_start_point = BRep_Tool.Pnt(local_start_vertex)
+
+                        wire_closed = False
+                        current_wires = []
+                        current_hash = edge_hash
+                        current_vertex_hash = start_vertex_hash
+                        current_local_point = local_start_point
+                        while not wire_closed:
+                            is_found = False
+                            connected_edges = self.C1_edges.neighbors(current_vertex_hash)
+
+                            for connected_vertex_hash in connected_edges:
+                                connected_vertex_node = self.C1_edges[current_vertex_hash][connected_vertex_hash]
+                                current_vertex = self.C1_edges.node[current_vertex_hash]["shape"]
+
+                                for connected_hash in connected_vertex_node:
+                                    connected_node = connected_vertex_node[connected_hash]
+
+                                    # Has two faces (not a seam) and is not smooth edge
+                                    if len(connected_node["faces"]) < 2:
+                                        used_edge_hashes.add(connected_hash)
+                                        continue
+
+                                    face_hash_a = connected_node["faces"][0].HashCode(HASH_INTEGER)
+                                    face_hash_b = connected_node["faces"][1].HashCode(HASH_INTEGER)
+
+                                    is_connected_a = graph.has_node(face_hash_a)
+                                    is_connected_b = graph.has_node(face_hash_b)
+                                    is_used = connected_hash in used_edge_hashes
+                                    is_start = current_vertex_hash == start_vertex_hash
+                                    is_end = connected_vertex_hash == start_vertex_hash
+                                    is_same = connected_hash == current_hash
+
+                                    if not is_same:
+                                        used_edge_hashes.add(connected_hash)
+
+                                    if is_connected_a != is_connected_b and not is_used and not is_same:
+                                        current_vertex_hash = connected_vertex_hash
+                                        current_hash = connected_hash
+                                        is_found = True
+
+                                        current_edge = connected_node["shape"]
+                                        if is_connected_a:
+                                            face_node = self.C1_faces.node[face_hash_a]
+                                            face_scale = self.node_scale(face_node, thickness, k_factor=k_factor)
+                                            local_edge = self.transformed_edge(current_edge, connected_node["faces"][0], surface_handle, scale=face_scale, transformations=transformations[face_hash_a])
+
+                                        else:
+                                            face_node = self.C1_faces.node[face_hash_b]
+                                            face_scale = self.node_scale(face_node, thickness, k_factor=k_factor)
+                                            local_edge = self.transformed_edge(current_edge, connected_node["faces"][1], surface_handle, scale=face_scale, transformations=transformations[face_hash_b])
+
+                                        first_vertex, last_vertex = edge_end_vertices(local_edge, ignore_orientation=False)
+                                        first_local_point = BRep_Tool.Pnt(first_vertex)
+                                        last_local_point = BRep_Tool.Pnt(last_vertex)
+
+                                        if current_local_point.Distance(first_local_point) > current_local_point.Distance(last_local_point):
+                                            first_local_point, last_local_point = last_local_point, first_local_point
+                                            local_edge.Reverse()
+
+                                        # Get current wire
+                                        if wire_builder.Error() != 1:
+                                            current_wire = wire_builder.Wire()
+
+                                        wire_builder.Add(local_edge)
+                                        wire_error = wire_builder.Error()
+
+                                        if wire_error > 0:
+                                            wire_builder = BRepBuilderAPI_MakeWire(current_wire)
+                                            fixed_edge = BRepBuilderAPI_MakeEdge(current_local_point, first_local_point).Edge()
+                                            wire_builder.Add(fixed_edge)
+                                            wire_builder.Add(local_edge)
+                                            logger.debug("Forced to add filler wire to close wire")
+
+                                        current_local_point = last_local_point
+
+                                        if is_end:
+                                            wire_closed = True
+                                            wires.append(current_wire)
+                                            wire_builder = BRepBuilderAPI_MakeWire()
+
+                                        break
+
+                                # Continue to next vertex
+                                if is_found:
+                                    break
+
+                            # Break if wire could not be closed (there is no next vertex that is feasabile)
+                            if not is_found:
+                                logger.debug("SHOULD NEVER HAPPEN")
+                                break
+
+        return wires
+
+
+    def transformed_edge_origin(self, edge, face, surface_handle, reverse=False, normal=gp_DZ(), ignore_orientation=False, transformations=[], scale=None, direction=None):
+        """
+        :return: origin of edge after transformation to unfolding surface from originial face
+        """
+        # trasnform a single (the first) vertex of the edge
+        first_test_vertex, last_test_vertex = edge_end_vertices(edge, ignore_orientation=False)
+        local_test_vertex = self.transformed_vertex(first_test_vertex, face, surface_handle, transformations=transformations, scale=scale, direction=direction)
+        first_test_point = BRep_Tool.Pnt(local_test_vertex)
+
+        # Place p-curve of original edge on new surface (surface_handle) and apply transformations
+        local_edge = self.transformed_edge(edge, face, surface_handle, transformations=transformations, scale=scale, direction=direction)
+
+        # Compute first/last vertices of transformed edge
+        first_vertex, last_vertex = edge_end_vertices(local_edge, ignore_orientation=False)
+        first_point = BRep_Tool.Pnt(first_vertex)
+        last_point = BRep_Tool.Pnt(last_vertex)
+
+        # Reverse transformed edge so the first vertex agrees with the first vertex of the original shape
+        # TODO: find a better way to guarantee correct orientation invariant to transformations
+        if first_test_point.Distance(first_point) > first_test_point.Distance(last_point):
+            local_edge.Reverse()
+            first_point, last_point = last_point, first_point
+
+        # Compute tangent along egde on laying on now surface
+        tangent = edge_tangent(local_edge, ignore_orientation=True)
+        if face.Orientation() != 0 and not ignore_orientation:
+            normal.Reverse()
+
+        # Reverse normal if base face we are unfolding to has a reversed orientation with regard to surface
+        if reverse:
+            normal.Reverse()
+
+        # Return gp_Ax3 of edge describing the full orientation/postion of edge
+        return gp_Ax3(first_point, gp_Dir(normal), gp_Dir(tangent))
+
+
+    def transformed_edge(self, edge, face, surface_handle, transformations=[], scale=None, direction=None):
+        """
+        :return: return an edge after placing it's p-curve on a new surface and succesively
+        applying the transformations
+        """
+        # Retrieve the pcurve on the cylindrical surface
+        p_curve_handle, u, v = BRep_Tool().CurveOnSurface(edge, face)
+
+        # non-uniform resizing (maintain currect surface area of unrolled face)
+        if scale:
+            # Get original end-points
+            first_uv_point = p_curve_handle.GetObject().Value(u)
+            last_uv_point = p_curve_handle.GetObject().Value(v)
+
+            # Gtransform to allow non-uniform scaling
+            transformation_2d = gp_GTrsf2d()
+            transformation_2d.SetValue(1, 1, scale[0])
+            transformation_2d.SetValue(2, 2, scale[1])
+            p_curve_handle = geomlib.GTransform(p_curve_handle, transformation_2d)
+
+            # Scale end-points manually for retrieving new bounding values
+            first_uv_point.SetX(scale[0] * first_uv_point.X())
+            first_uv_point.SetY(scale[1] * first_uv_point.Y())
+
+            last_uv_point.SetX(scale[0] * last_uv_point.X())
+            last_uv_point.SetY(scale[1] * last_uv_point.Y())
+
+            # Projection of first point on curve
+            projection = Geom2dAPI_ProjectPointOnCurve(first_uv_point, p_curve_handle)
+            u = projection.LowerDistanceParameter()
+
+            # Projection of second point on curve
+            projection = Geom2dAPI_ProjectPointOnCurve(last_uv_point, p_curve_handle)
+            v = projection.LowerDistanceParameter()
+
+        edge = BRepBuilderAPI_MakeEdge(p_curve_handle, surface_handle, u, v).Edge()
+
+        # Apply transformations on newly generated edge
+        for transformation in transformations:
+            edge = BRepBuilderAPI_Transform(edge, transformation).Shape()
+
+        edge = topods_Edge(edge)
+        edge = fix_edge(edge)
+
+        return edge
+
+
+    def transformed_vertex(self, vertex, face, surface_handle, transformations=[], scale=None, direction=False, TOLLERANCE=TOLLERANCE):
+        """
+        :return: return a vertex after placing on a new surface using the original uv coordinates and succesively
+        applying the transformations
+        """
+        point = BRep_Tool.Pnt(vertex)
+        shape_analysis = ShapeAnalysis_Surface(face_surface_handle(face))
+        uv_point = shape_analysis.ValueOfUV(point, TOLLERANCE)
+
+        if scale:
+            uv_point.SetX(scale[0] * uv_point.X())
+            uv_point.SetY(scale[1] * uv_point.Y())
+
+        shape_analysis = ShapeAnalysis_Surface(surface_handle)
+        point = shape_analysis.Value(uv_point)
+        vertex = BRepBuilderAPI_MakeVertex(point).Vertex()
+
+        for transformation in transformations:
+            vertex = BRepBuilderAPI_Transform(vertex, transformation).Shape()
+
+        return topods_Vertex(vertex)
+
+
+    def plot_transformed_face(self, face, surface_handle, transformations=[], scale=None, direction=None, color="white"):
+        """
+        display face edges after transformation
+        """
+        for prev_edge, edge, edge_loop in face_edge_pairs(face):
+            edge = self.transformed_edge(edge, face, surface_handle, scale=scale, direction=direction, transformations=transformations)
+            display.DisplayShape(edge, update=True, color=color)
+
+
+    def node_scale(self, node, thickness, k_factor=0.5):
+        if node["convexity"] == FaceTypes.PLANAR:
+            return None
+
+        bend_face = node["shape"]
+        face_domain = domain(bend_face)
+        face_angle = abs(face_domain[0] - face_domain[1])
+        face_radius = node["radii"][0]
+
+        # New bend radius and angle
+        face_radius = abs(1 / node["curvature"] / 2)
+        if abs(node["radii"][0]) > abs(node["radii"][1]):
+            face_angle = abs(face_domain[0] - face_domain[1])
+        else:
+            face_angle = abs(face_domain[2] - face_domain[3])
+
+        if node["convexity"] != FaceTypes.CONCAVE:
+            face_radius -= thickness
+            face_angle *= -1
+
+        bend_radius = node["bend_radius"] or face_radius
+        k_factor = node["k_factor"] or k_factor
+
+        b_allowance = bend_allowance(face_angle, bend_radius, thickness, k_factor)
+        r_allowance = radius_allowance(face_angle, face_radius, bend_radius)
+        allowance = b_allowance  - r_allowance
+        scale = allowance / face_angle
+
+        if abs(node["radii"][0]) > abs(node["radii"][1]):
+            return (scale, 1.0)
+        else:
+            return (1.0, scale)
+
+
+    def unfold_graph(self, graph, thickness, base_hash=None, align=False, display=False, k_factor=0.5):
+        """
+        Compute transformations to unfold a graph
+        """
+        node_transformations = {}
+        node_flattened = {}
+
+        # Use random hash if none is given
+        if not base_hash:
+            for base_hash in graph.nodes():
+                break
+
+        if not align:
+            # Compute surface to unfold other faces to
+            base_node = self.C1_faces.node[base_hash]
+            base_face = base_node["shape"]
+            base_surface_handle = face_surface_handle(base_face)
+            base_props = FaceProperties(base_surface_handle)
+            base_normal = base_props.normal()
+            node_transformations[base_hash] = []
+            base_reversed = False
+
+        else:
+            # Compute surface to unfold 2D plane
+            base_node = self.C1_faces.node[base_hash]
+            base_normal = gp_Vec(gp_DZ())
+            base_plane = gp_Pln(gp_Origin(), gp_DZ())
+            base_face = BRepBuilderAPI_MakeFace(base_plane).Face()
+            base_surface_handle = face_surface_handle(base_face)
+            node_transformations[base_hash] = []
+            base_reversed = (base_node["shape"].Orientation() != 0)
+
+            if base_reversed:
+                transformation = gp_Trsf()
+                transformation.SetTransformation(gp_Ax3(gp_Origin(), gp_DZ().Reversed(), gp_DX()))
+                node_transformations[base_hash] = [transformation]
+
+        # Plot the initial face in the 2D coordinate system
+        if display:
+            self.plot_transformed_face(base_node["shape"], base_surface_handle, transformations=node_transformations[base_hash], color="red")
+
+        # Loop over all adjacent faces until all are covered
+        for successors in nx.bfs_successors(graph, source=base_hash):
+
+            predecessor_hash = successors[0]
+            for successor_hash in successors[1]:
+
+                # Get networkX nodes of the common edge
+                edge_node = graph[predecessor_hash][successor_hash]
+                edge_shape = edge_node["shape"]
+
+                # Get networkX nodes of the faces
+                predecessor_node = self.C1_faces.node[predecessor_hash]
+                successor_node = self.C1_faces.node[successor_hash]
+
+                # Scaling factors
+                predecessor_scale = self.node_scale(predecessor_node, thickness, k_factor=k_factor)
+                successor_scale = self.node_scale(successor_node, thickness, k_factor=k_factor)
+
+                # Faces
+                successor_face = successor_node["shape"]
+                predecessor_face = predecessor_node["shape"]
+
+                # Get compute axis of both faces to compute transformation
+                predecessor_origin = self.transformed_edge_origin(edge_shape, predecessor_face, base_surface_handle, scale=predecessor_scale, normal=base_normal, reverse=(base_face.Orientation() != 0), ignore_orientation=True, transformations=node_transformations[predecessor_hash])
+                successor_origin = self.transformed_edge_origin(edge_shape, successor_face, base_surface_handle, scale=successor_scale, normal=base_normal, reverse=(base_face.Orientation() != 0))
+
+                # Initialize list of transformations
+                node_transformations[successor_hash] = []
+
+                transformation = gp_Trsf()
+                transformation.SetTransformation(successor_origin)
+                node_transformations[successor_hash].append(transformation)
+
+                transformation = gp_Trsf()
+                transformation.SetTransformation(predecessor_origin)
+                transformation.Invert()
+                node_transformations[successor_hash].append(transformation)
+
+                # Plot the transformed successor face in the 2D coordinate system
+                if display:
+                    self.plot_transformed_face(successor_face, base_surface_handle, scale=successor_scale, transformations=node_transformations[successor_hash], color="orange")
+
+        return base_surface_handle, node_transformations, base_reversed
+
+
+    def node_center_line(self, node_hash, trim_line=True):
+        node = self.C0_faces.nodes[node_hash]
+        face = node["shape"]
+        face_domain = domain(face)
+        adaptor = BRepAdaptor_Surface(face)
+
+        if abs(node["radii"][0]) > abs(node["radii"][1]):
+            xMid = (face_domain[0] + face_domain[1]) / 2.
+            start = adaptor.Value(xMid, face_domain[2])
+            end = adaptor.Value(xMid, face_domain[3])
+        else:
+            yMid = (face_domain[2] + face_domain[3]) / 2.
+            start = adaptor.Value(face_domain[0], yMid)
+            end = adaptor.Value(face_domain[1], yMid)
+
+        line = GC_MakeSegment(start, end)
+        edge = BRepBuilderAPI_MakeEdge(line.Value()).Edge()
+
+        if trim_line:
+            minimum = float("inf")
+            maximum = float("-inf")
+
+            surface_handle = BRep_Tool_Surface(face)
+            interference = boolean_common(edge, face)
+            topo_explorer = TopExp_Explorer(interference, TopAbs_VERTEX)
+            while topo_explorer.More():
+                current_vertex = topods_Vertex(topo_explorer.Current())
+                current_point = BRep_Tool.Pnt(current_vertex)
+
+                if abs(node["radii"][0]) > abs(node["radii"][1]):
+                    _, current_value = point_to_parameter(current_point, surface_handle)
+                else:
+                    current_value, _ = point_to_parameter(current_point, surface_handle)
+
+                if current_value < minimum:
+                    minimum = current_value
+                    start = current_point
+
+                elif current_value > maximum:
+                    maximum = current_value
+                    end = current_point
+
+                topo_explorer.Next()
+
+            line = GC_MakeSegment(start, end)
+            edge = BRepBuilderAPI_MakeEdge(line.Value()).Edge()
+
+        return edge
+
+
+    def extract_bends(self, graph, surface_handle, thickness, transformations=[], reversed=False, display=True, k_factor=0.5):
+        """
+        :return: create ordered wires of all connected edges by removing the seams.
+        Tranformations can be passed and applied to edges before they are joined to
+        a wire.
+        """
+        bends = []
+        used_edge_hashes = set()
+
+        # Loop over all nodes (faces) in the graph
+        for node_hash in graph.nodes():
+            node = graph.node[node_hash]
+
+            if node["convexity"] != FaceTypes.PLANAR:
+
+                if node_hash in self.C2_faces:
+                    component = nx.node_connected_component(self.C2_faces, node_hash)
+
+                    if len(component) > 1:
+                        logger.warning("Connected bend surfaces {}".format(len(component)))
+                        display.DisplayShape(node["shape"], update=True, color="orange")
+
+                bend_face = node["shape"]
+                bend_scale = self.node_scale(node, thickness, k_factor=k_factor)
+                bend_surface_handle = face_surface_handle(bend_face)
+                bend_props = FaceProperties(bend_surface_handle)
+                # center_line = face_center_line(bend_face)
+                center_line = self.node_center_line(node_hash)
+
+                first_bend_vertex, last_bend_vertex = edge_end_vertices(center_line, ignore_orientation=False)
+                first_bend_vertex = self.transformed_vertex(first_bend_vertex, bend_face, surface_handle, scale=bend_scale, transformations=transformations[node_hash])
+                last_bend_vertex = self.transformed_vertex(last_bend_vertex, bend_face, surface_handle, scale=bend_scale, transformations=transformations[node_hash])
+
+
+                first_point = BRep_Tool.Pnt(first_bend_vertex)
+                last_point = BRep_Tool.Pnt(last_bend_vertex)
+
+                # bend_radius = node["radii"][0]
+                bend_domain = domain(bend_face)
+                # bend_angle = abs(bend_domain[0] - bend_domain[1])
+
+                # New bend radius
+                bend_radius = abs(1 / node["curvature"] / 2)
+                # New angle
+                if abs(node["radii"][0]) > abs(node["radii"][1]):
+                    bend_angle = abs(bend_domain[0] - bend_domain[1])
+                else:
+                    bend_angle = abs(bend_domain[2] - bend_domain[3])
+
+                if node["convexity"] != FaceTypes.CONCAVE:
+                    bend_radius -= thickness
+                    bend_angle *= -1
+                    logger.debug("Subtracting thickness from bend. original: {:0.2f} -> {:0.2f}".format(bend_radius + thickness, bend_radius))
+
+                bend_k = (1 - bend_radius) / thickness
+
+                if reversed:
+                    bend_angle *= -1
+
+                adaptor = BRepAdaptor_Surface(node["shape"])
+                logger.debug("Radius: %0.2f, K-factor: %0.2f, Angle: %0.2f" % (bend_radius, k_factor, bend_angle / 3.14 * 180))
+
+                bend = Entity(type=Entity.EntityTypes.LINE, inner_radius=bend_radius, k_factor=k_factor, angle=bend_angle)
+                bend.path.append([first_point.Coord(1), first_point.Coord(2)])
+                bend.path.append([last_point.Coord(1), last_point.Coord(2)])
+                bends.append(bend)
+
+                if display:
+                    bend_line = GC_MakeSegment(first_point, last_point)
+                    bend_edge = BRepBuilderAPI_MakeEdge(bend_line.Value()).Edge()
+                    display.DisplayShape(bend_edge, update=True, color="orange")
+
+        return bends
+
+
+    def extract_all(self, graph, surface_handle, transformations=[]):
+        """
+        :return: create ordered wires of all connected edges by removing the seams.
+        Tranformations can be passed and applied to edges before they are joined to
+        a wire.
+        """
+        bends = []
+        used_edge_hashes = set()
+
+        # Loop over all nodes (faces) in the graph
+        for node_hash in graph.nodes():
+            node = graph.node[node_hash]
+
+            # Loop over all edges, with internal wires grouped
+            for edge, is_first, is_reversed in face_edges(node["shape"]):
+                edge_hash = edge.HashCode(HASH_INTEGER)
+
+                if edge_hash in used_edge_hashes:
+                    continue
+
+                else:
+                    used_edge_hashes.add(edge_hash)
+
+
+    def get_sheet_base(self, min_thickness=1e-3):
+        """
+        Try to recognize faces that could belong to a sheet metal part and the
+        distance between them indicating the thickness (uniform thickness expected)
+        """
+        thickness = float("inf")
+        second_hash = None
+
+        used_hashes = set()
+        sorted_areas = sorted(self.areas, key=lambda x: x[0], reverse=True)
+
+        # First side (largest face)
+        first_area, first_hash = sorted_areas[0]
+        first_node = self.C1_faces.node[first_hash]
+        first_face = first_node["shape"]
+        first_point = mid_point(first_face)
+        first_normal = calculating_normal_at_point(first_face, first_point)
+
+        # Find opposite face
+        used_hashes.add(first_hash)
+        for i in range(1, len(sorted_areas)):
+            current_area, current_hash = sorted_areas[i]
+            current_node = self.C1_faces.node[current_hash]
+
+            if current_hash in used_hashes:
+                continue
+
+            used_hashes.add(current_hash)
+            if first_node["convexity"].value == -current_node["convexity"].value:
+                current_face = current_node["shape"]
+                current_surface_handle = face_surface_handle(current_face)
+
+                ray = Geom_Line(gp_Lin(first_point, gp_Dir(first_normal)))
+                intersection = GeomAPI_IntCS(ray.GetHandle(), current_surface_handle)
+
+                if not intersection.IsDone() or intersection.NbPoints() == 0:
+                    continue
+
+                u, v, w = intersection.Parameters(1)
+
+                # New face is opposite of face not behind it
+                if w >= 0:
+                    continue
+
+                shape_analysis = ShapeAnalysis_Surface(current_surface_handle)
+                current_point = shape_analysis.Value(gp_Pnt2d(u, v))
+                current_thickness = first_point.Distance(current_point)
+                current_normal = calculating_normal_at_point(current_face, current_point)
+
+                if (first_normal.IsOpposite(current_normal, 3.14 / 180)):
+
+                    # TODO: testing
+                    # Check if face has more then just concave edges
+                    is_embossing = False
+                    hash_a = current_hash
+                    for hash_b in self.C0_faces[hash_a]:
+                        edge = self.C0_faces[hash_a][hash_b]
+
+                        # Edge is concave
+                        if edge["convexity"].value == 1:
+                            is_embossing = True
+                            break
+
+                    # Find closest opposite value but not on the same plane
+                    if current_thickness < thickness and current_thickness >= min_thickness and not is_embossing:
+                        thickness = current_thickness
+                        second_hash = current_hash
+
+        if thickness == float("inf"):
+            thickness = 0.0
+
+        logger.info("Detected thickness: {:0.2f}".format(thickness))
+        return first_hash, second_hash, thickness
+
+
+    def get_chamfered_edges(self, graph):
+        feature_graph = self.C0_faces.copy()
+
+        boundary_edges = nx.edge_boundary(feature_graph, graph.nodes())
+        for node_a, node_b in boundary_edges:
+            edge = self.C0_faces[node_a][node_b]
+
+            if abs(abs(edge["angle"]) - math.pi / 2) < (math.pi / 180):
+                logger.debug("SQUARE", edge)
+                display.DisplayShape(edge["shape"], update=True, color="green")
+
+                # if node_a in self.node_labels.keys():
+                #     display.DisplayShape(feature_graph.node[node_b]["shape"], update=True, color="red")
+                # else:
+                #     display.DisplayShape(feature_graph.node[node_a]["shape"], update=True, color="red")
+
+            elif abs(abs(edge["angle"]) - math.pi / 4) < (math.pi / 180):
+                logger.debug("FORTYFIVE", edge)
+                display.DisplayShape(edge["shape"], update=True, color="blue")
+
+                # if node_a in self.node_labels.keys():
+                #     display.DisplayShape(feature_graph.node[node_b]["shape"], update=True, color="blue")
+                # else:
+                #     display.DisplayShape(feature_graph.node[node_a]["shape"], update=True, color="blue")
+
+            else:
+                logger.debug("OTHER", edge)
+                display.DisplayShape(edge["shape"], update=True, color="red")
+
+        # feature_graph.remove_nodes_from(self.node_labels.keys())
+
+
+    def analyze_feature(self, component, nodes_a, nodes_b):
+        loop_a = {"concave": False, "convex": True, "fillet": False, "chamfer": False}
+        loop_b = {"concave": False, "convex": True, "fillet": False, "chamfer": False}
+
+        # feature = {"top": False, "bottom": False, "chamfer": False, "fillet": False, }
+
+
+        boundary_edges = nx.edge_boundary(self.C0_faces, component)
+        for face_a, face_b in boundary_edges:
+            edge = self.C0_faces[face_a][face_b]
+
+            if face_a in nodes_a or face_b in nodes_a:
+
+                if edge["convexity"].value == 1:
+                    loop_a["concave"] = True
+                    loop_a["convex"] = False
+
+                elif edge["convexity"].value == 0:
+                    if face_a in nodes_a:
+                        face_node = self.C0_faces.nodes[face_a]
+                        face_node["convexity"]
+
+                    else:
+                        pass
+
+
+    def get_feature_extrema(self, base_hash, component):
+        base_node = self.C0_faces.nodes[base_hash]
+        base_face = base_node["shape"]
+        base_point = mid_point(base_face)
+        base_normal = calculating_normal_at_point(base_face, base_point)
+
+        minimum = float("inf")
+        maximum = float("-inf")
+        minimum = 0.0
+        maximum = 0.0
+
+        # surface_handle = face_surface_handle(base_face)
+        # ray = Geom_Line(gp_Lin(base_point, gp_Dir(base_normal)))
+
+        # Find opposite face
+        for node_hash in component:
+            face_node = self.C0_faces.nodes[node_hash]
+            face = face_node["shape"]
+
+            for edge, is_first, is_reversed in face_edges(face):
+                # first_vertex, last_vertex = edge_end_vertices(edge, ignore_orientation=True)
+
+                point = first_edge_point(edge)
+                distance_vec = gp_Vec(base_point, point)
+                distance = distance_vec.Dot(base_normal) / base_normal.Magnitude()
+
+                if distance < minimum:
+                    minimum = distance
+
+                if distance > maximum:
+                    maximum = distance
+
+        if minimum == float("inf"):
+            minimum = 0.0
+
+        if maximum == float("-inf"):
+            maximum = 0.0
+
+
+
+                # other_dir = util_face.DiffGeom.normal(0.5, 0.5)
+                # other_vec = gp_Vec(other_dir)
+
+                # distance_vec = gp_Vec(normal_origin, mid_point)
+
+                # # compute the distance projected on the normal vector
+                # # (works also if the midpoints aligned along the normals)
+                # distance = abs(distance_vec.Dot(normal_vec) / normal_vec.Magnitude() ** 2)
+
+
+
+
+
+                    # first_vertex_hash = first_vertex.HashCode(HASH_INTEGER)
+            #         # last_vertex_hash = last_vertex.HashCode(HASH_INTEGER)
+
+            # intersection = GeomAPI_IntCS(ray.GetHandle(), surface_handle)
+
+            # if not intersection.IsDone() or intersection.NbPoints() == 0:
+            #     continue
+
+            # u, v, w = intersection.Parameters(1)
+
+            # if w < minimum:
+            #     minimum = w
+
+            # if w > maximum:
+            #     maximum = w
+
+        return (minimum, maximum)
+
+
+
+
+        # for i in range(1, len(sorted_areas)):
+        #     current_area, current_hash = sorted_areas[i]
+        #     current_node = self.C1_faces.node[current_hash]
+
+        #     if current_hash in used_hashes:
+        #         continue
+
+        #     used_hashes.add(current_hash)
+        #     if first_node["convexity"].value == -current_node["convexity"].value:
+        #         current_face = current_node["shape"]
+        #         current_surface_handle = face_surface_handle(current_face)
+
+        #         ray = Geom_Line(gp_Lin(first_point, gp_Dir(first_normal)))
+        #         intersection = GeomAPI_IntCS(ray.GetHandle(), current_surface_handle)
+
+
+    def get_feature_groups(self, component):
+        group_graph = self.C2_faces.subgraph(component)
+        group_components = nx.connected_components(group_graph)
+
+        # Count length of groups
+        group_count = sum(1 for _ in group_components)
+        return group_count
+
+
+    def get_connecting_features(self, graph_a, graph_b, display=None):
+        features_graph = self.C0_faces.copy()
+
+        nodes_a = graph_a.nodes()
+        nodes_b = graph_b.nodes()
+
+        features_graph.remove_nodes_from(nodes_a)
+        features_graph.remove_nodes_from(nodes_b)
+
+        # All connected components not on one of the two graphs in argument
+        feature_components = nx.connected_components(features_graph)
+
+        for feature_component in feature_components:
+            # logger.debug("[+] %s" % (feature_component))
+
+            group_count = self.get_feature_groups(feature_component)
+            # logger.debug(" - group count: %s" % (group_count))
+
+            boundary_edges = nx.edge_boundary(self.C0_faces, feature_component)
+            for hash_a, hash_b in boundary_edges:
+
+                if hash_a in feature_component:
+                    extrusion_mimumum, extrusion_maximum = self.get_feature_extrema(hash_b, feature_component)
+
+                else:
+                    extrusion_mimumum, extrusion_maximum = self.get_feature_extrema(hash_a, feature_component)
+
+            # logger.debug(" - extrusion min: %0.2f" % (extrusion_mimumum))
+            # logger.debug(" - extrusion max: %0.2f" % (extrusion_maximum))
+            # continue
+
+
+            group_graph = self.C2_faces.subgraph(feature_component)
+            group_components = list(nx.connected_components(group_graph))
+
+            # logger.debug(group_components)
+            if len(group_components) == 1:
+                # logger.debug(" + one single cylinder: %s" % (len(group_components)))
+
+
+                loop_a = None
+                loop_b = None
+
+                boundary_edges = nx.edge_boundary(self.C0_faces, feature_component)
+                for node_a, node_b in boundary_edges:
+                    edge = self.C0_faces[node_a][node_b]
+
+                    if node_a in nodes_a or node_b in nodes_a:
+                        # logger.debug(" - a: " + str(edge))
+
+                        if not loop_a:
+                            loop_a = {"convex": 0, "concave": 0}
+
+                        if edge["convexity"].value == 1:
+                            loop_a["concave"] += 1
+
+                        elif edge["convexity"].value == -1:
+                            loop_a["convex"] += 1
+
+                    elif node_a in nodes_b or node_b in nodes_b:
+                        # logger.debug(" - b: " + str(edge))
+
+                        if not loop_b:
+                            loop_b = {"convex": 0, "concave": 0}
+
+                        if edge["convexity"].value == 1:
+                            loop_b["concave"] += 1
+
+                        elif edge["convexity"].value == -1:
+                            loop_b["convex"] += 1
+
+                # logger.debug("loop_a")
+                # logger.debug(loop_a)
+                # logger.debug("loop_b")
+                # logger.debug(loop_b)
+
+                    # first_vertex, last_vertex = edge_end_vertices(edge["shape"], ignore_orientation=True)
+                    # first_vertex_hash = first_vertex.HashCode(HASH_INTEGER)
+                    # last_vertex_hash = last_vertex.HashCode(HASH_INTEGER)
+
+                    # is_added = False
+                    # for wire in wires:
+                    #     if first_vertex_hash in wire:
+                    #         logger.debug("first vertex found")
+                    #         wire.add(last_vertex_hash)
+
+                    #     elif last_vertex_hash in wire:
+                    #         logger.debug("last vertex found")
+                    #         wire.add(first_vertex_hash)
+
+                    #     break
+
+                    # if not is_added:
+                    #     wire = set()
+                    #     wire.add(first_vertex_hash)
+                    #     wire.add(last_vertex_hash)
+                    #     wires.append(wire)
+
+
+
+                    # logger.debug("-" + str(start_vertex_hash))
+
+                    # for key in self.C0_edges[first_vertex_hash]:
+                        # logger.debug(key)
+
+
+
+
+
+
+                for node_hash in group_components[0]:
+                    node = group_graph.node[node_hash]
+                    node_face = node["shape"]
+                    display.DisplayShape(node_face, update=True, color="blue")
+
+
+            elif len(group_components) <= 3:
+                # logger.debug(" + two single cylinder: %s" % (len(group_components)))
+
+                boundary_edges = nx.edge_boundary(self.C0_faces, feature_component)
+                for node_a, node_b in boundary_edges:
+                    edge = self.C0_faces[node_a][node_b]
+
+                for group in group_components:
+                    for node_hash in group:
+                        node = group_graph.node[node_hash]
+                        node_face = node["shape"]
+                        display.DisplayShape(node_face, update=True, color="red")
+
+            # else:
+            #     logger.debug(" - not a single cylinder: %s" % (len(group_components)))
+
+            #     for group in group_components:
+            #         for node_hash in group:
+            #             node = group_graph.node[node_hash]
+            #             node_face = node["shape"]
+            #             display.DisplayShape(node_face, update=True, color="red")
+
+
+def stitch_shape(shape):
+    sewing = BRepBuilderAPI_Sewing()
+    face_explorer = TopExp_Explorer(shape, TopAbs_FACE)
+
+    while face_explorer.More():
+        current_face = topods_Face(face_explorer.Current())
+        sewing.Add(current_face)
+        face_explorer.Next()
+
+    sewing.Perform()
+    sewed_shape = sewing.SewedShape()
+
+    if sewed_shape.ShapeType() != TopAbs_SHELL:
+        return None
+
+    shell = topods_Shell(sewed_shape)
+    builder = BRepBuilderAPI_MakeSolid(shell)
+    shape = builder.Shape()
+
+    if shape.ShapeType() == TopAbs_SOLID:
+        return shape
+
+    else:
+        return None
+
+
+def get_largest_solid(shape):
+    solid = None
+    max_volume = 0
+    solid_explorer = TopExp_Explorer(shape, TopAbs_SOLID)
+    while solid_explorer.More():
+        current_solid = topods_Solid(solid_explorer.Current())
+        current_volume = get_volume(current_solid)
+
+        if current_volume > max_volume:
+            max_volume = current_volume
+            solid = current_solid
+
+        solid_explorer.Next()
+
+    return solid
+
+
+def stitch_shell(shape):
+    solid = None
+    max_volume = 0
+    shell_explorer = TopExp_Explorer(shape, TopAbs_SHELL)
+    while shell_explorer.More():
+        current_shell = topods_Shell(shell_explorer.Current())
+        solid = stitch_shape(current_shell)
+        shell_explorer.Next()
+
+        if solid:
+            break
+
+    return solid
+
+
+def get_solid_from_shape(shape):
+    shapeType = shape.ShapeType()
+
+    if shapeType == TopAbs_SOLID:
+        logger.info("Returning original shape as SOLID")
+        return shape
+
+    elif shapeType == TopAbs_SHELL:
+        logger.info("Stitching faces in SHELL to extract a valid SOLID")
+        return stitch_shape(shape)
+
+    elif shapeType == TopAbs_COMPOUND:
+        logger.info("Trying to extract largest SOLID from COMPOUND shape")
+        solid = get_largest_solid(shape)
+
+        if not solid:
+            logger.info("Reverting to stitching shells to extract SOLID")
+            solid = stitch_shell(shape)
+
+            if not solid:
+                logger.info("Reverting to stitching faces to extract SOLID")
+                solid = stitch_shape(shape)
+
+        return solid
+
+    elif shapeType == TopAbs_COMPSOLID:
+        logger.info("Trying to extract largest SOLID from COMPSOLID shape")
+        solid = get_largest_solid(shape)
+
+        if not solid:
+            logger.info("Reverting to stitching faces to extract SOLID")
+            solid = stitch_shape(shape)
+
+        return solid
+
+    else:
+        logger.info("Unsupported shape. Can not extract a valid solid.")
+        return None
+
+
+def shapeTypeString(shape):
+    st = shape.ShapeType()
+    s = "Unknown"
+    if st == TopAbs_VERTEX:
+        s = "Vertex"
+    if st == TopAbs_SOLID:
+        s = "Solid"
+    if st == TopAbs_EDGE:
+        s = "Edge"
+    if st == TopAbs_FACE:
+        s = "Face"
+    if st == TopAbs_SHELL:
+        s = "Shell"
+    if st == TopAbs_WIRE:
+        s = "Wire"
+    if st == TopAbs_COMPOUND:
+        s = "Compound"
+    if st == TopAbs_COMPSOLID:
+        s = "Compsolid"
+    return s
+
+
+# Get the center line of a face (e.g. bend line of a bend face)
+# -> Edge
+from OCC.GC import GC_MakeSegment
+from OCC.TopAbs import TopAbs_VERTEX
+from OCC.ShapeAnalysis import ShapeAnalysis_Surface
+def face_center_line(face, trim_line=True):
+    face_domain = domain(face)
+    adaptor = BRepAdaptor_Surface(face)
+
+    xMid = (face_domain[0] + face_domain[1]) / 2.
+    start = adaptor.Value(xMid, face_domain[2])
+    end = adaptor.Value(xMid, face_domain[3])
+
+    line = GC_MakeSegment(start, end)
+    edge = BRepBuilderAPI_MakeEdge(line.Value()).Edge()
+
+    if trim_line:
+        yMin = float("inf")
+        yMax = float("-inf")
+
+        surface_handle = BRep_Tool_Surface(face)
+        interference = boolean_common(edge, face)
+        topo_explorer = TopExp_Explorer(interference, TopAbs_VERTEX)
+        while topo_explorer.More():
+            current_vertex = topods_Vertex(topo_explorer.Current())
+            current_point = BRep_Tool.Pnt(current_vertex)
+
+            _, yCurrent = point_to_parameter(current_point, surface_handle)
+            if yCurrent < yMin:
+                yMin = yCurrent
+                start = current_point
+
+            elif yCurrent > yMax:
+                yMax = yCurrent
+                end = current_point
+
+            topo_explorer.Next()
+
+        line = GC_MakeSegment(start, end)
+        edge = BRepBuilderAPI_MakeEdge(line.Value()).Edge()
+
+    return edge
+
+# Boolean intersect (common area) of two shapes
+from OCC.BRepAlgoAPI import BRepAlgoAPI_Common
+def boolean_common(shape, other_shape):
+    common = BRepAlgoAPI_Common(shape, other_shape)
+    common.SetFuzzyValue(1e-3)
+
+    return common.Shape()
+
+#===========================================================================
+# Test function for use with CLI
+#===========================================================================
+def main(step_path, align=False, output=False, k_factor=0.5, display=None):
+    logger.debug("[+] %s" % (step_path))
+
+    # Import step file
+    shape = import_step(step_path)
+    # shape = fix_shape(shape)
+
+    # logger.debug(shapeTypeString(shape))
+
+    # If not SOLID
+    shape = get_solid_from_shape(shape)
+    if not shape:
+        logger.debug("[!] no solid could be extracted from shape")
+    shape = fix_shape(shape)
+
+    # Render initial shape
+    if display:
+        display.EraseAll()
+        display.DisplayShape(shape, update=True, color="white", transparency=0.8)
+
+
+    # Compute attribute adjecency graphs both (graphs limited to c0 and c1 continuity)
+    aag = AdjacencyGraph(shape)
+    aag.full()
+    aag.smooth()
+    aag.grouped()
+
+    volume = get_volume(shape)
+    area = sum([areas[0] for areas in aag.areas])
+    min_thickness = 2 * volume / area
+
+    logger.debug("[+] volume: %0.2f" % (volume))
+    logger.debug("[+] area: %0.2f" % (area))
+    logger.debug("[+] min thickness: %0.2f" % (min_thickness))
+
+
+    # Find starting faces for sheet metal unfolding
+    first_hash, second_hash, thickness = aag.get_sheet_base(min_thickness=min_thickness)
+    graph_a = aag.get_connected_subgraph(first_hash, ignore_complex=True, display=display)
+    graph_b = aag.get_connected_subgraph(second_hash, ignore_complex=True, display=display)
+
+    aag.get_connecting_features(graph_a, graph_b, display=display)
+
+    # aag.get_chamfered_edges(graph_a)
+
+    # return
+    # compute transformations to unfold graph
+    surface_handle, transformations, base_reversed = aag.unfold_graph(graph_a, thickness, base_hash=first_hash, align=align, display=None, k_factor=k_factor)
+
+    # return
+    wires = aag.extract_wires(graph_a, surface_handle, thickness, transformations=transformations, k_factor=k_factor)
+    bends = aag.extract_bends(graph_a, surface_handle, thickness, transformations=transformations, reversed=base_reversed, display=display, k_factor=k_factor)
+    # return
+
+
+    if display:
+        for wire in wires:
+            display.DisplayShape(wire, update=True, color="red")
+    # return
+
+    # surface_handle, transformations, base_reversed = aag.unfold_graph(graph_b, thickness, base_hash=second_hash, align=align, display=False, k_factor=k_factor)
+    # wires = aag.extract_wires(graph_b, surface_handle, thickness, transformations=transformations, k_factor=k_factor)
+    # bends = aag.extract_bends(graph_b, surface_handle, thickness, transformations=transformations, reversed=base_reversed, display=display, k_factor=k_factor)
+    # for wire in wires:
+    #     display.DisplayShape(wire, update=True, color="blue")
+    # return
+
+    logger.debug("WIRES COUNT: %s" % (len(wires)))
+
+    # Export to CYCAD DXF
+    if output:
+        pattern = Pattern(thickness=thickness, wires=wires, bends=bends)
+        pattern.parse_wires()
+        pattern.save(output)
+
+    return
+
+    # Find outer wire (largest bounding box)
+    max_size = 0
+    max_index = 0
+    bbox = Bnd_Box()
+    for i in range(len(wires)):
+        # shape_fix = ShapeFix_Wire()
+        # shape_fix.Load(wires[i])
+        # shape_fix.FixClosed(1e-3)
+        # if not shape_fix.Perform():
+        #     logger.debug(" -  open wire detected")
+
+        # wires[i] = shape_fix.Wire()
+
+        brepbndlib_Add(wires[i], bbox)
+        bb_xmin, bb_ymin, _, bb_xmax, bb_ymax, _ = bbox.Get()
+        wire_size = (bb_xmax - bb_xmin) * (bb_ymax - bb_ymin)
+
+        if wire_size > max_size:
+            max_size = wire_size
+            max_index = i
+
+        # if display:
+            # display.DisplayShape(wires[i], update=True, color="red")
+
+    # return
+
+    # Generate single unfolded face based on wires
+    make_face = BRepBuilderAPI_MakeFace(wires.pop(max_index))
+    for wire in wires:
+        make_face.Add(wire)
+
+    face = make_face.Face()
+    face = fix_shape(face)
+
+    # Extrude face to solid of equal thickness to input shape
+    normal = face_normal(aag.C1_faces.node[first_hash]["shape"])
+
+    if align:
+        normal = gp_Vec(gp_DZ())
+
+    solid = extrude_face(face, normal.Multiplied(thickness).Reversed())
+    solid = fix_shape(solid)
+
+    if display:
+        display.DisplayShape(face, update=True, color="red", transparency=0.5)
+        display.DisplayShape(solid, update=True, color="white", transparency=0.8)
+
+    input_volume = get_volume(shape)
+    output_volume = get_volume(solid)
+    logger.debug(" -  volume diff: %0.2f, input: %0.2f, output: %0.2f, relative: %0.2f" % (input_volume - output_volume, input_volume, output_volume, (input_volume - output_volume) / input_volume))
+
+
+#===========================================================================
+# CLI for testing
+#===========================================================================
+def is_dir(dirname):
+    """
+    Checks if a path is an actual directory
+    """
+    if not os.path.isdir(dirname):
+        msg = "{0} is not a directory".format(dirname)
+        raise argparse.ArgumentTypeError(msg)
+    else:
+        return os.path.abspath(os.path.realpath(os.path.expanduser(dirname)))
+
+
+def is_file(filename):
+    """
+    Checks if a path is an actual file
+    """
+    if not os.path.isfile(filename):
+        msg = "{0} is not a file".format(filename)
+        raise argparse.ArgumentTypeError(msg)
+    else:
+        return os.path.abspath(os.path.realpath(os.path.expanduser(filename)))
+
+
+display, start_display, add_menu, add_function_to_menu = (None, None, None, None)
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-f", "--file", help="input file [.stp, .step]", type=is_file)
+    parser.add_argument("-d", "--directory", help="input directory", type=is_dir)
+    parser.add_argument("-a", "--align", help="align output to 2D plane", action='store_true')
+    parser.add_argument("-r", "--display", help="display graphical interface", action='store_true')
+    parser.add_argument("-p", "--profile", help="generate call graph for optimization", action='store_true')
+    parser.add_argument("-o", "--output", help="the output file to be generated", action='store_true')
+    parser.add_argument("-k", "--k_factor", help="k-factor to use with all bends and their drawn inner radius", type=float, default=0.5)
+    args = parser.parse_args()
+
+    # Add single file path
+    file_paths = []
+    if args.file:
+        file_paths.append(args.file)
+
+    # Add files from directory
+    if args.directory:
+        for file_name in os.listdir(args.directory):
+            if file_name.lower().endswith((".stp", ".step")):
+                file_path = os.path.join(args.directory, file_name)
+                file_paths.append(file_path)
+
+    # Exit if no input is found
+    if len(file_paths) == 0:
+        parser.print_help()
+
+    # Prepare GUI in case of displaying
+    if args.display:
+        import OCC.Display.SimpleGui
+
+        for file_path in file_paths:
+            display, start_display, add_menu, add_function_to_menu = OCC.Display.SimpleGui.init_display("qt-pyqt5")
+            main(file_path, align=args.align, display=True, output=args.output, k_factor=args.k_factor)
+            start_display()
+
+    # Loop over files and prolfile
+    elif args.profile:
+        from pycallgraph import PyCallGraph
+        from pycallgraph.output import GraphvizOutput
+        with PyCallGraph(output=GraphvizOutput()):
+
+            for file_path in file_paths:
+                main(file_path, align=args.align, display=False, output=args.output, k_factor=args.k_factor)
+
+    # Loop over files without prolfiling
+    else:
+        for file_path in file_paths:
+            main(file_path, align=args.align, display=False, output=args.output, k_factor=args.k_factor)

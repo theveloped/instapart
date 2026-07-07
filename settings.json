@@ -1,0 +1,21 @@
+{
+    "default": {
+        "command": "auto",
+        "loglevel": 20,
+        "filename_source": "PART",
+        "filename_charset": null,
+        "filename_min": null,
+        "filename_max": null,
+        "filename_trim": "END",
+        "filename_postfix": null,
+        "filename_postfix": null,
+        "k_factor": 0.5,
+        "export": ["PDF", "STP", "XLS"],
+        "absolute_volume_threshold": 5.0,
+        "relative_volume_threshold": 0.025,
+
+        "directory": "C:\\Users\\SmartPart\\Desktop\\instapart\\examples\\xml",
+        "check_features": true,
+        "repair": true
+    }
+}

@@ -1,0 +1,229 @@
+{
+  "messages": [], 
+  "timestamp": "2020-07-05T16:15:34.779227+00:00", 
+  "tree": {
+    "components": [], 
+    "count": 1, 
+    "id": 3095682994038120, 
+    "index": 0, 
+    "is_assembly": false, 
+    "is_component": false, 
+    "is_compound": false, 
+    "is_free": true, 
+    "is_reference": false, 
+    "is_shape": true, 
+    "is_simple": true, 
+    "level": 0, 
+    "messages": [], 
+    "name": "_Unsaved_", 
+    "orientation": [
+      0.0, 
+      0.0, 
+      1.0, 
+      0.0
+    ], 
+    "reference": 0, 
+    "root": null, 
+    "shapes": [
+      {
+        "area": 2504.4748095371237, 
+        "bends": [
+          {
+            "angle": -2.906972603160596, 
+            "group": 1, 
+            "length": 22.9, 
+            "radius": 2.0499999999999985
+          }, 
+          {
+            "angle": -1.5707963267948966, 
+            "group": 2, 
+            "length": 22.9, 
+            "radius": 1.6499999999999981
+          }
+        ], 
+        "features": [], 
+        "files": [
+          {
+            "path": "./examples/3dhubs/bent_failing_1/_Unsaved_.dxf"
+          }
+        ], 
+        "height": 15.668508182017481, 
+        "length": 29.865517931652057, 
+        "messages": [
+          {
+            "code": 3, 
+            "description": "Volume difference after flattening 129.95mm^3", 
+            "value": 129.9538420261456
+          }
+        ], 
+        "pattern": {
+          "bends": [
+            {
+              "centroid": null, 
+              "path": [
+                [
+                  16.190887, 
+                  -7.0
+                ], 
+                [
+                  16.190887, 
+                  15.9
+                ]
+              ], 
+              "radius": null, 
+              "type": "LINE"
+            }, 
+            {
+              "centroid": null, 
+              "path": [
+                [
+                  1.924226, 
+                  -7.0
+                ], 
+                [
+                  1.924226, 
+                  15.9
+                ]
+              ], 
+              "radius": null, 
+              "type": "LINE"
+            }
+          ], 
+          "contour": {
+            "centroid": null, 
+            "path": [
+              [
+                3.848451, 
+                15.9
+              ], 
+              [
+                0.0, 
+                15.9
+              ], 
+              [
+                -24.15, 
+                15.9, 
+                0.4142135623730951
+              ], 
+              [
+                -26.15, 
+                13.9
+              ], 
+              [
+                -26.15, 
+                -5.0, 
+                0.4142135623730951
+              ], 
+              [
+                -24.15, 
+                -7.0
+              ], 
+              [
+                0.0, 
+                -7.0
+              ], 
+              [
+                3.848451, 
+                -7.0
+              ], 
+              [
+                12.048451, 
+                -7.0
+              ], 
+              [
+                20.333323, 
+                -7.0
+              ], 
+              [
+                20.333323, 
+                15.9
+              ], 
+              [
+                12.048451, 
+                15.9
+              ], 
+              [
+                3.848451, 
+                15.9
+              ], 
+              [
+                3.848451, 
+                15.9
+              ]
+            ], 
+            "radius": null, 
+            "type": "PATH"
+          }, 
+          "height": 23.229569001179573, 
+          "holes": [
+            {
+              "centroid": [
+                -22.15000000000003, 
+                7.95
+              ], 
+              "path": [
+                [
+                  -20.1, 
+                  7.95, 
+                  1.0
+                ], 
+                [
+                  -24.2, 
+                  7.95, 
+                  1.0
+                ], 
+                [
+                  -20.1, 
+                  7.95
+                ]
+              ], 
+              "radius": 2.0500000000000007, 
+              "type": "CIRCLE"
+            }, 
+            {
+              "centroid": [
+                -12.15000000000003, 
+                7.95
+              ], 
+              "path": [
+                [
+                  -10.1, 
+                  7.95, 
+                  1.0
+                ], 
+                [
+                  -14.2, 
+                  7.95, 
+                  1.0
+                ], 
+                [
+                  -10.1, 
+                  7.95
+                ]
+              ], 
+              "radius": 2.0500000000000007, 
+              "type": "CIRCLE"
+            }
+          ], 
+          "label": {}, 
+          "origin": [
+            -26.314785, 
+            -7.164785
+          ], 
+          "other": null, 
+          "thickness": 1.6000000000000019, 
+          "width": 46.64810752024997
+        }, 
+        "section": null, 
+        "type": "SHEET", 
+        "volume": 1788.107752288325, 
+        "width": 23.229570801169576
+      }
+    ], 
+    "translation": [
+      0.0, 
+      0.0, 
+      0.0
+    ]
+  }
+}

@@ -1,0 +1,34 @@
+{
+    "layers": [
+        {
+            "name": "cut",
+            "color": "WHITE",
+            "linetype": "CONTINUOUS",
+            "entities": ["CONTOUR", "HOLE"]
+        },
+        {
+            "name": "engrave",
+            "color": "YELLOW",
+            "linetype": "CONTINUOUS",
+            "entities": ["EMBOSSING", "EXTRUSION", "CHAMFER", "COUNTERSINK"]
+        },
+        {
+            "name": "bend",
+            "color": "CYAN",
+            "linetype": "DASHED",
+            "entities": ["BEND"]
+        },
+	{
+            "name": "description",
+            "color": "BLACK",
+            "linetype": "CONTINUOUS",
+            "entities": ["QUANTITY", "THICKNESS", "MATERIAL"]
+        },
+	{
+            "name": "label",
+            "color": "BLACK",
+            "linetype": "CONTINUOUS",
+            "entities": ["LABEL"]
+        }
+    ]
+}

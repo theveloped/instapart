@@ -1,0 +1,16 @@
+{
+    "default": {
+        "command": "auto",
+        "loglevel": 20,
+        "filename_source": "PART",
+        "filename_charset": null,
+        "filename_min": null,
+        "filename_max": null,
+        "filename_trim": "END",
+        "export": ["PDF", "STP"],
+
+        "directory": "C:\\Users\\SmartPart\\Desktop\\instapart\\examples\\xml",
+        "check_features": true,
+        "repair": true
+    }
+}

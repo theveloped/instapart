@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Part>
+    <file_path>C:\Users\Tobias\Desktop\instapart\examples\parts\SmartPart_28.stp</file_path>
+    <output_dir>C:\Users\Tobias\Desktop\instapart\temp\peter1</output_dir>
+    <k_factor>0.5</k_factor>
+    <material>1.4301</material>
+    <quantity>6</quantity>
+    <delivery_date>31-12-2019</delivery_date>
+    <reference>PostNummer</reference>
+    <label_text>PostNummer</label_text>
+    <label_height>15.0</label_height>
+</Part>
