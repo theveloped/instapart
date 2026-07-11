@@ -5,6 +5,7 @@ status in {pass, warn, fail, skip}. Checks never raise: a broken artifact is a
 failing check, not a harness crash.
 """
 
+import itertools
 import math
 import os
 from collections import namedtuple
@@ -254,12 +255,24 @@ def check_bends(entry, sheet_shapes):
 
     expected_angles = entry.get("expected_bend_angles")
     if expected_angles is not None:
-        observed = sorted(
-            round(180.0 / math.pi * (b.get("angle") or 0.0), 2)
-            for s in sheet_shapes for b in s.get("bends") or []
+        per_shape = [
+            [round(180.0 / math.pi * (b.get("angle") or 0.0), 2) for b in s.get("bends") or []]
+            for s in sheet_shapes
+        ]
+        observed = sorted(a for angles in per_shape for a in angles)
+        # Which side a shape unfolds from is arbitrary (hash-order dependent,
+        # so it can differ per platform), and a mirrored unfold flips the sign
+        # of every bend in that shape. Accept any per-shape combination of
+        # flips — consistent with the mirror-tolerant golden DXF comparison.
+        if len(per_shape) <= 12:
+            flip_combos = itertools.product((1, -1), repeat=len(per_shape))
+        else:
+            flip_combos = [(1,) * len(per_shape), (-1,) * len(per_shape)]
+        ok = any(
+            _angles_close(sorted(f * a for f, angles in zip(flips, per_shape) for a in angles),
+                          expected_angles)
+            for flips in flip_combos
         )
-        mirrored = sorted(-a for a in observed)
-        ok = _angles_close(observed, expected_angles) or _angles_close(mirrored, expected_angles)
         checks.append(_result("bend_angles_frozen", "pass" if ok else "fail",
                               measured=observed, expected=expected_angles))
     return checks

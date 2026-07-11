@@ -196,6 +196,42 @@ class TestManifest:
 
 
 # ---------------------------------------------------------------------------
+# Frozen bend-angle comparison (per-shape mirror tolerance)
+# ---------------------------------------------------------------------------
+
+class TestBendAngleCheck:
+    @staticmethod
+    def _shape(angles_deg):
+        return {"pattern": {}, "bends": [
+            {"angle": math.radians(a), "radius": 1.0, "length": 10.0} for a in angles_deg]}
+
+    @staticmethod
+    def _angle_check(entry, shapes):
+        from benchmarks import invariants
+        checks = invariants.check_bends(entry, shapes)
+        return next(c for c in checks if c.name == "bend_angles_frozen")
+
+    def test_single_shape_mirror_passes(self):
+        entry = {"expected_bend_angles": [-90.0, -90.0]}
+        assert self._angle_check(entry, [self._shape([90.0, 90.0])]).status == "pass"
+
+    def test_per_shape_mirror_passes(self):
+        # one shape of a multi-part file unfolds from the other side
+        # (observed for examples/assy/EMO-72-07-200.stp on Linux)
+        entry = {"expected_bend_angles": sorted([-90.0] * 6 + [45.0] * 2 + [90.0] * 4)}
+        shapes = [
+            self._shape([-90.0, -90.0, 45.0, 45.0]),
+            self._shape([90.0, 90.0, 90.0, 90.0]),   # frozen as -90 x4
+            self._shape([90.0, 90.0, 90.0, 90.0]),
+        ]
+        assert self._angle_check(entry, shapes).status == "pass"
+
+    def test_wrong_angles_still_fail(self):
+        entry = {"expected_bend_angles": [-90.0, -90.0]}
+        assert self._angle_check(entry, [self._shape([45.0, 90.0])]).status == "fail"
+
+
+# ---------------------------------------------------------------------------
 # Golden bookkeeping: golden_metrics.json vs manifest references
 # ---------------------------------------------------------------------------
 
