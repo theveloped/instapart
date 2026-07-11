@@ -11,6 +11,9 @@ remain in the repo untouched for reference.
 
 ## Development environment
 
+Dependencies are declared only in `environment.yml` (including the pip
+section); there is no `requirements.txt`.
+
 ```
 conda env create -f environment.yml
 conda activate instapart3
