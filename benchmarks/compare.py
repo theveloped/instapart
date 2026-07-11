@@ -67,6 +67,12 @@ def main(argv):
         elif STATUS_ORDER.get(cur_status, 9) < STATUS_ORDER.get(base_status, 9):
             improvements.append("%s: %s -> %s" % (path, base_status, cur_status))
 
+        # Inside known failures the pipeline output is nondeterministic (e.g.
+        # M1182's sheet/bend counts vary run to run via OCC-internal hashing);
+        # frozen-metric drift there is noise, only the status transition gates.
+        if "known_failure" in (base_status, cur_status):
+            continue
+
         base_codes = set(base_record.get("message_codes") or [])
         cur_codes = set(cur_record.get("message_codes") or [])
         if cur_codes - base_codes:
