@@ -18,9 +18,10 @@ jobs:
       - name: Install test dependencies
         run: pip install pytest ezdxf pyyaml ruff
       - name: Lint
-        run: ruff check .
+        run: python -m ruff check .
       - name: Unit tests
-        run: pytest
+        # module form puts the repo root on sys.path (tests import `benchmarks`)
+        run: python -m pytest
       - name: Validate benchmark manifest
         run: python -m benchmarks validate
 
@@ -37,6 +38,20 @@ jobs:
       - name: Run smoke benchmark
         shell: bash -el {0}
         run: python -m benchmarks smoke --jobs 2
+      - name: Print failure report
+        if: failure()
+        shell: bash -el {0}
+        run: |
+          cat benchmarks/runs/*/report.md || true
+          echo "--- failing results ---"
+          python - <<'EOF' || true
+          import glob, json
+          for path in glob.glob("benchmarks/runs/*/results.jsonl"):
+              for line in open(path, encoding="utf-8"):
+                  r = json.loads(line)
+                  if r.get("status") in ("fail", "crash", "timeout"):
+                      print(json.dumps(r, indent=2))
+          EOF
       - name: Upload run report
         if: failure()
         uses: actions/upload-artifact@v4
@@ -64,6 +79,15 @@ jobs:
       - name: Run full corpus
         shell: bash -el {0}
         run: python -m benchmarks run --jobs 4 --label ci-full
+      - name: Print results
+        # results.jsonl in the log makes runs comparable without artifact
+        # downloads (python -m benchmarks compare reads the reconstructed file)
+        if: always()
+        shell: bash -el {0}
+        run: |
+          echo "===BEGIN results.jsonl==="
+          cat benchmarks/runs/*/results.jsonl || true
+          echo "===END results.jsonl==="
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
