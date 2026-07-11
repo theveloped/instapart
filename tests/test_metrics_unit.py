@@ -230,6 +230,24 @@ class TestBendAngleCheck:
         entry = {"expected_bend_angles": [-90.0, -90.0]}
         assert self._angle_check(entry, [self._shape([45.0, 90.0])]).status == "fail"
 
+    def test_large_assembly_one_shape_flipped(self):
+        # one flipped 4-bend shape in a >12-shape assembly (observed for
+        # examples/assy/3D-Uebersicht-7014-S2.STEP on Linux); grouping by
+        # identical angle multiset keeps the search exact and tiny
+        shapes = ([self._shape([90.0, 90.0])] * 20
+                  + [self._shape([-90.0, -90.0])] * 8
+                  + [self._shape([-95.0, 95.0])]           # flip-invariant
+                  + [self._shape([90.0] * 4)])             # frozen as -90 x4
+        expected = sorted([90.0] * 40 + [-90.0] * 16 + [-95.0, 95.0] + [-90.0] * 4)
+        entry = {"expected_bend_angles": expected}
+        assert self._angle_check(entry, shapes).status == "pass"
+
+    def test_large_assembly_wrong_angles_still_fail(self):
+        shapes = [self._shape([90.0, 90.0])] * 20 + [self._shape([45.0, 45.0])]
+        expected = sorted([90.0] * 40 + [30.0, 30.0])
+        entry = {"expected_bend_angles": expected}
+        assert self._angle_check(entry, shapes).status == "fail"
+
 
 # ---------------------------------------------------------------------------
 # Golden bookkeeping: golden_metrics.json vs manifest references
