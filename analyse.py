@@ -42,7 +42,7 @@ def get_rondom_color():
     return colors[randint(0, 7)]
 
 
-def grouped_graph(graph, base_hash, node_labels={}, node_groups={}):
+def grouped_graph(graph, base_hash, node_labels=None, node_groups=None):
     """Contract all C2-connected face groups of the C1 component around base.
 
     Rewritten from the legacy incremental merge, which was edge-order
@@ -52,6 +52,8 @@ def grouped_graph(graph, base_hash, node_labels={}, node_groups={}):
     continuity==2 subgraph is order-independent and expresses the same
     intent: one node per multi-face bend / cylinder ring.
     """
+    node_labels = node_labels if node_labels is not None else {}
+    node_groups = node_groups if node_groups is not None else {}
     component = nx.node_connected_component(graph.C1_faces, base_hash)
     subgraph = graph.C1_faces.subgraph(component)
 

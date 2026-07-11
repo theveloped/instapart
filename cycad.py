@@ -367,10 +367,10 @@ class Entity(object):
 
 
 class Pattern(object):
-    def __init__(self, thickness, wires=[], bends=[], loops=[], material=None, quantity=None, date=None, TOLLERANCE=TOLLERANCE):
-        self.wires = wires
-        self.loops = loops
-        self.bends = bends
+    def __init__(self, thickness, wires=None, bends=None, loops=None, material=None, quantity=None, date=None, TOLLERANCE=TOLLERANCE):
+        self.wires = wires if wires is not None else []
+        self.loops = loops if loops is not None else []
+        self.bends = bends if bends is not None else []
         self.thickness = thickness
         self.material = material
         self.quantity = quantity
@@ -704,7 +704,8 @@ class Pattern(object):
         return entity
 
 
-    def export_cycad(self, material=None, thickness=None, add_text=True, description=None, messages=[]):
+    def export_cycad(self, material=None, thickness=None, add_text=True, description=None, messages=None):
+        messages = messages if messages is not None else []
         logger.debug("Exporting CYCAD")
 
         # template_path = os.getcwd()
@@ -822,7 +823,8 @@ class Pattern(object):
         return outputStream
 
 
-    def export_dxf(self, template, material=None, thickness=None, add_text=True, description=None, messages=[]):
+    def export_dxf(self, template, material=None, thickness=None, add_text=True, description=None, messages=None):
+        messages = messages if messages is not None else []
         logger.debug("Exporting DXF (template)")
 
         dwg = ezdxf.new("AC1015", setup=True)
@@ -933,7 +935,8 @@ class Pattern(object):
         return outputStream
 
 
-    def export_designer(self, application_name="BYSOFT7_DESIGNER", guid=None, measurementSystem="Metric", material=None, thickness=None, add_text=True, description=None, messages=[]):
+    def export_designer(self, application_name="BYSOFT7_DESIGNER", guid=None, measurementSystem="Metric", material=None, thickness=None, add_text=True, description=None, messages=None):
+        messages = messages if messages is not None else []
         logger.debug("Exporting Designer DXF")
         dwg = ezdxf.new("AC1015", setup=True)
         dwg.appids.add(application_name)
@@ -1079,7 +1082,7 @@ class Pattern(object):
         return outputStream
 
 
-    def save(self, file_path, dxf_type="DESIGNER", description=None, messages=[], add_text=True, template=None):
+    def save(self, file_path, dxf_type="DESIGNER", description=None, messages=None, add_text=True, template=None):
         if dxf_type == "DESIGNER":
             logger.debug("Saving DESIGNER DXF")
             stream = self.export_designer(thickness=self.thickness, material=self.material, description=description, messages=messages, add_text=add_text)

@@ -141,7 +141,7 @@ def main(file_path, output_dir,
         filename_trim="END",
         filename_prefix=None,
         filename_postfix=None,
-        export_names={},
+        export_names=None,
         export_template=None,
 
         absolute_volume_threshold=5.0,
@@ -149,6 +149,8 @@ def main(file_path, output_dir,
         timings=None,
     ):
     timings = timings or NullTimer()
+    if export_names is None:
+        export_names = {}
     job_data = Job(file_path, output_dir)
     input_file = os.path.basename(file_path)
     input_file = input_file.rsplit(".", 1)[0]

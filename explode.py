@@ -33,7 +33,7 @@ logger = logging.getLogger()
 
 class Part(object):
 
-    def __init__(self, id=None, root=None, name=None, index=0, level=0, label=None, shape=None, shapes=[], solids=[], messages=[], location=None, reference=None, components=[]):
+    def __init__(self, id=None, root=None, name=None, index=0, level=0, label=None, shape=None, shapes=None, solids=None, messages=None, location=None, reference=None, components=None):
         self.id = id
         self.count = None
         self.root = root
@@ -42,13 +42,13 @@ class Part(object):
         self.level = level
         self.label = label
         self.shape = shape
-        self.shapes = shapes
+        self.shapes = shapes if shapes is not None else []
         self.location = location
         self.reference = reference
-        self.components = components
+        self.components = components if components is not None else []
 
-        self.solids = solids
-        self.messages = messages
+        self.solids = solids if solids is not None else []
+        self.messages = messages if messages is not None else []
 
         if not id:
             # uuid similar to NDB datastore
@@ -372,10 +372,12 @@ def main(file_path, output_dir, extension="stp", explode_bodies=False, limit_bod
             filename_trim="END",
             filename_prefix=None,
             filename_postfix=None,
-            export_names={}
+            export_names=None
         ):
     input_file = os.path.basename(file_path)
     input_file = input_file.rsplit(".", 1)[0]
+    if export_names is None:
+        export_names = {}
     if output_dir not in export_names:
         export_names[output_dir] = [input_file]
 
