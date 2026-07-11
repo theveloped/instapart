@@ -160,6 +160,7 @@ def get_area(shape, TOLLERANCE=1e-5):
         return props.Mass()
 
     except Exception:
+        logger.warning("Area computation failed, returning 0", exc_info=True)
         return 0
 
 
@@ -174,6 +175,7 @@ def get_volume(shape, TOLLERANCE=1e-5):
         return props.Mass()
 
     except Exception:
+        logger.warning("Volume computation failed, returning 0", exc_info=True)
         return 0
 
 

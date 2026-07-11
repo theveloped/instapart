@@ -2619,6 +2619,10 @@ def main(
         shape_data.area = sum([areas[0] for areas in aag.areas])
         shape_data.width, shape_data.height, shape_data.length = get_boundingbox_dimensions(solid, use_mesh=False)
 
+        if not shape_data.area:
+            logger.warning("Could not detect shape thickness and/or base flange (zero surface area)")
+            sys.exit(1)
+
         min_thickness = 2 * shape_data.volume / shape_data.area
         first_hash, second_hash, thickness = aag.get_sheet_base(min_thickness=min_thickness, display=display)
 
