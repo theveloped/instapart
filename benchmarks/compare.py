@@ -4,7 +4,7 @@ import argparse
 import json
 
 from . import manifest as manifest_mod
-from .runner import BASELINE_PATH, find_run
+from .runner import BASELINE_DIR, BASELINE_PATH, find_run
 
 STATUS_ORDER = {"pass": 0, "warn": 1, "known_failure": 2, "fail": 3, "crash": 4, "timeout": 4}
 
@@ -21,7 +21,11 @@ def main(argv):
     args = parser.parse_args(argv)
 
     if len(args.runs) >= 2:
-        base_dir, cur_dir = find_run(args.runs[0]), find_run(args.runs[1])
+        try:
+            base_dir, cur_dir = find_run(args.runs[0]), find_run(args.runs[1])
+        except FileNotFoundError as exc:
+            print(exc)
+            return 2
     else:
         try:
             with open(BASELINE_PATH, "r", encoding="utf-8") as fh:
@@ -29,8 +33,23 @@ def main(argv):
         except FileNotFoundError:
             print("No blessed baseline (run `python -m benchmarks bless <run>` first).")
             return 2
-        base_dir = find_run(base_name)
-        cur_dir = find_run(args.runs[0] if args.runs else "latest")
+        try:
+            base_dir = find_run(base_name)
+        except FileNotFoundError:
+            if (BASELINE_DIR / "results.jsonl").exists():
+                print("Baseline run %s not present locally; using committed snapshot." % base_name)
+                base_dir = BASELINE_DIR
+            else:
+                print("Baseline run %s is not present locally (benchmarks/runs/ is not committed)\n"
+                      "and no committed snapshot exists under %s.\n"
+                      "On a machine with the corpus results, run `python -m benchmarks bless <run>`\n"
+                      "to write and commit the snapshot." % (base_name, BASELINE_DIR))
+                return 2
+        try:
+            cur_dir = find_run(args.runs[0] if args.runs else "latest")
+        except FileNotFoundError as exc:
+            print(exc)
+            return 2
 
     base, cur = load_run(base_dir), load_run(cur_dir)
     print("Comparing %s (baseline) -> %s" % (base_dir.name, cur_dir.name))

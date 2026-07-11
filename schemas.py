@@ -161,6 +161,9 @@ class SectionSchema(BaseSchema):
 
 
 class MessageSchema(BaseSchema):
+    # The pipeline builds codes as strings "000".."008" (see ERRORS.md);
+    # Int deliberately coerces them on dump ("003" -> 3) to match the
+    # committed golden JSONs, and benchmarks/metrics.py parses either form.
     code = fields.Int()
     description = fields.Str()
     value = fields.Float()

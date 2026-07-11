@@ -193,3 +193,26 @@ class TestManifest:
         manifest_mod.save(data, path)
         loaded = manifest_mod.load(path)
         assert loaded["files"] == data["files"]
+
+
+# ---------------------------------------------------------------------------
+# Golden bookkeeping: golden_metrics.json vs manifest references
+# ---------------------------------------------------------------------------
+
+class TestGoldenBookkeeping:
+    def test_orphaned_golden_metrics_are_exactly_the_known_set(self):
+        """flat_with_curves_1/2/3 goldens are deliberately unlinked (legacy
+        goldens were failed unfolds; see manifest notes). Any other mismatch
+        between golden_metrics.json and the manifest is unintended drift."""
+        golden_metrics = golden_mod.load_golden_metrics()
+        manifest = manifest_mod.load()
+        referenced = {dxf for e in manifest["files"] for dxf in e.get("golden_dxf") or []}
+        orphans = set(golden_metrics) - referenced
+        assert orphans == {
+            "examples/3dhubs/flat_with_curves_1/_Unsaved_.dxf",
+            "examples/3dhubs/flat_with_curves_2/_Unsaved_.dxf",
+            "examples/3dhubs/flat_with_curves_3/_Unsaved_.dxf",
+        }
+        assert referenced <= set(golden_metrics), (
+            "manifest references golden DXFs missing from golden_metrics.json: %s"
+            % sorted(referenced - set(golden_metrics)))

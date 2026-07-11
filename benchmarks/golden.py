@@ -9,6 +9,13 @@ hole geometry and per-layer entity structure must not.
 Golden JSONs were produced by the Python 2 / OCC 6.9 pipeline: ids are Py2
 hash()-derived and timestamps/paths are machine-specific, so comparison runs
 on normalized structures over an explicit field list only.
+
+Note: golden_metrics.json contains three entries (flat_with_curves_1/2/3
+_Unsaved_.dxf) that are deliberately NOT referenced by any manifest
+golden_dxf field — their legacy goldens were failed unfolds and the ported
+pipeline's output is superior (see the per-entry `note:` fields in
+manifest.yaml). They are kept in golden_metrics.json for reference only;
+tests/test_metrics_unit.py pins this orphan set so drift is caught.
 """
 
 import json

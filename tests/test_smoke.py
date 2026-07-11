@@ -30,7 +30,17 @@ def smoke_run(tmp_path_factory):
     return {r["path"]: r for r in results}
 
 
-@pytest.mark.parametrize("entry", _smoke_entries(), ids=lambda e: e["path"])
+def _smoke_params():
+    entries = _smoke_entries()
+    if not entries:
+        # Surface a missing manifest as a visible skip instead of an empty
+        # parametrize list, which would silently collect zero tests.
+        return [pytest.param(None, id="manifest-missing",
+                             marks=pytest.mark.skip(reason="no smoke entries (benchmarks/manifest.yaml missing?)"))]
+    return [pytest.param(e, id=e["path"]) for e in entries]
+
+
+@pytest.mark.parametrize("entry", _smoke_params())
 def test_smoke_file(entry, smoke_run):
     record = smoke_run.get(entry["path"])
     assert record is not None, "no result for %s" % entry["path"]

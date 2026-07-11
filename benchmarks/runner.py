@@ -18,6 +18,9 @@ from .manifest import REPO_ROOT
 
 RUNS_DIR = Path(__file__).resolve().parent / "runs"
 BASELINE_PATH = Path(__file__).resolve().parent / "baseline.json"
+# Committed snapshot of the blessed run's results, so `compare` works on a
+# fresh clone where the (gitignored) run directory does not exist.
+BASELINE_DIR = Path(__file__).resolve().parent / "baseline"
 HISTORY_PATH = Path(__file__).resolve().parent / "history.csv"
 
 CRASH_CODES = {
@@ -273,7 +276,12 @@ def cmd_bless(args):
     run_dir = find_run(args.args[0] if args.args else "latest")
     with open(BASELINE_PATH, "w", encoding="utf-8", newline="\n") as fh:
         json.dump({"run": run_dir.name}, fh, indent=2)
+    BASELINE_DIR.mkdir(exist_ok=True)
+    shutil.copy2(run_dir / "results.jsonl", BASELINE_DIR / "results.jsonl")
+    if (run_dir / "run.json").exists():
+        shutil.copy2(run_dir / "run.json", BASELINE_DIR / "run.json")
     print("Blessed baseline: %s" % run_dir.name)
+    print("Snapshot copied to %s (commit it so `compare` works on fresh clones)" % BASELINE_DIR)
     return 0
 
 
