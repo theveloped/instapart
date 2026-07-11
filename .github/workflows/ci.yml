@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Fast job: lint + harness self-tests. No OCC / conda needed.
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: pip install pytest ezdxf pyyaml ruff
+      - name: Lint
+        run: ruff check .
+      - name: Unit tests
+        run: pytest
+      - name: Validate benchmark manifest
+        run: python -m benchmarks validate
+
+  # Smoke benchmark: ~11 STEP files through the full pipeline (needs OCC).
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+      - name: Run smoke benchmark
+        shell: bash -el {0}
+        run: python -m benchmarks smoke --jobs 2
+      - name: Upload run report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-report
+          path: |
+            benchmarks/runs/**/report.md
+            benchmarks/runs/**/results.jsonl
+            benchmarks/runs/**/logs/
+          if-no-files-found: ignore
+
+  # Full 127-file corpus: manual trigger only (1-3 h). Used to verify
+  # behavior-changing fixes via `python -m benchmarks compare` on the
+  # downloaded results.jsonl artifacts.
+  full:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+      - name: Run full corpus
+        shell: bash -el {0}
+        run: python -m benchmarks run --jobs 4 --label ci-full
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-results
+          path: |
+            benchmarks/runs/**/results.jsonl
+            benchmarks/runs/**/run.json
+            benchmarks/runs/**/report.md
+          if-no-files-found: ignore
