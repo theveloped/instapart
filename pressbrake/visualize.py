@@ -152,6 +152,69 @@ def plot_envelope_strip(envelopes, x_range, path=None, title=None):
     return figure
 
 
+def plot_setup_strip(plan, path=None, title=None):
+    """
+    Strip chart of one ProcessPlan: per step the required (green) and
+    forbidden (red) intervals of its setup's chosen tools, overlaid with the
+    installed punch (blue outline) and die (dark outline) sections; dashed
+    separators between setup groups.
+    """
+    plt = _pyplot()
+
+    step_rows = []
+    for setup_index, setup in enumerate(plan.setups):
+        for step_index in setup.step_indices:
+            step_rows.append((setup_index, setup, plan.steps[step_index]))
+
+    figure, ax = plt.subplots(
+        figsize=(11, 1.1 * max(len(step_rows), 2) + 1.2))
+
+    x_low, x_high = float("inf"), -float("inf")
+    previous_setup = None
+    for row, (setup_index, setup, step) in enumerate(step_rows):
+        y = len(step_rows) - 1 - row
+        if setup.required is not None:
+            ax.broken_barh(_spans(setup.required), (y + 0.55, 0.32),
+                           facecolors="#2ecc71")
+        for placement, color, offset in (
+                (setup.punch_placement, "#2980b9", 0.15),
+                (setup.die_placement, "#34495e", 0.0)):
+            if placement is None:
+                continue
+            for run in placement.runs:
+                for section in run.sections:
+                    ax.broken_barh(
+                        [(section.x_start, section.length)],
+                        (y + offset, 0.32),
+                        facecolors="none", edgecolors=color, linewidth=1.4)
+                    x_low = min(x_low, section.x_start)
+                    x_high = max(x_high, section.x_end)
+        label = "step {}: bends {}{} | {} / {}".format(
+            row, list(step.bend_ids),
+            " flipped" if step.action.flip else "",
+            setup.punch_id, setup.die_id)
+        ax.text(1.005, (y + 0.5) / len(step_rows), label,
+                transform=ax.transAxes, va="center", fontsize=8)
+        if previous_setup is not None and setup_index != previous_setup:
+            ax.axhline(y + 1.0, color="black", linestyle="--", linewidth=0.8)
+        previous_setup = setup_index
+
+    if x_low > x_high:
+        x_low, x_high = 0.0, 1.0
+    pad = 0.05 * (x_high - x_low) + 5.0
+    ax.set_xlim(x_low - pad, x_high + pad)
+    ax.set_ylim(0, len(step_rows))
+    ax.set_yticks([])
+    ax.set_xlabel("machine X [mm]  (green: required core, outlines: installed sections)")
+    if title:
+        ax.set_title(title)
+    figure.tight_layout()
+    if path:
+        figure.savefig(path, dpi=110, bbox_inches="tight")
+        plt.close(figure)
+    return figure
+
+
 def _spans(interval_set):
     return [(start, end - start) for start, end in interval_set.to_pairs()]
 

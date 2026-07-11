@@ -139,10 +139,10 @@ def box(side=80.0, wall=30.0, corner_gap=5.0, thickness=2.0, inner_radius=2.0):
         Bend(id=1, axis_point=np.array([0.0, side]), axis_dir=np.array([1.0, 0.0]),
              angle_target=quarter, inner_radius=inner_radius, k_factor=0.5,
              length=side, parent_panel=0, child_panel=2),
-        Bend(id=2, axis_point=np.array([0.0, 0.0]), axis_dir=np.array([0.0, 1.0]),
+        Bend(id=2, axis_point=np.array([0.0, gap]), axis_dir=np.array([0.0, 1.0]),
              angle_target=quarter, inner_radius=inner_radius, k_factor=0.5,
              length=side - 2 * gap, parent_panel=0, child_panel=3),
-        Bend(id=3, axis_point=np.array([side, 0.0]), axis_dir=np.array([0.0, 1.0]),
+        Bend(id=3, axis_point=np.array([side, gap]), axis_dir=np.array([0.0, 1.0]),
              angle_target=quarter, inner_radius=inner_radius, k_factor=0.5,
              length=side - 2 * gap, parent_panel=0, child_panel=4),
     ]
@@ -194,6 +194,52 @@ def tabbed_flange(width=100.0, base=50.0, tab=30.0, gap=(40.0, 60.0), thickness=
              length=width - gap[1], parent_panel=0, child_panel=2),
     ]
     return _graph(panels, bends, thickness, "tabbed_flange")
+
+
+def partial_lip_notched(width=100.0, base=60.0, wall=30.0, lip=20.0,
+                        lip_end=30.0, notch_depth=5.0, thickness=2.0,
+                        inner_radius=2.0):
+    """
+    Base - wall - return lip where the lip covers only x in [0, lip_end],
+    and the wall bend line is notched over that span so the wall-bend
+    REQUIRED interval starts past the lip while the formed lip forbids
+    straight-punch material over [0, lip_end].
+
+    Because envelope coordinates are bend-relative (each hinge START at
+    x=0), the lip bend's required [0, lip_end] lands exactly inside the
+    wall bend's forbidden zone under the aligned-starts convention: a
+    straight punch therefore needs TWO setups (a segmented run starting
+    past the lip for the wall, a separate run for the lip), while a
+    relief punch handles both bends in one setup.
+    """
+    n1 = lip_end + notch_depth
+    base_outline = np.array([
+        [0, 0], [width, 0], [width, base],
+        [n1, base], [n1, base - notch_depth],
+        [0, base - notch_depth],
+    ], dtype=float)
+    # material crosses the wall bend line only for x > n1
+    wall_outline = np.array([
+        [n1, base], [width, base], [width, base + wall],
+        [0, base + wall], [0, base + notch_depth], [n1, base + notch_depth],
+    ], dtype=float)
+    lip_outline = rectangle(0, base + wall, lip_end, base + wall + lip)
+    panels = [
+        Panel(id=0, outline=base_outline),
+        Panel(id=1, outline=wall_outline),
+        Panel(id=2, outline=lip_outline),
+    ]
+    quarter = math.pi / 2
+    bends = [
+        Bend(id=0, axis_point=np.array([0.0, base]), axis_dir=np.array([1.0, 0.0]),
+             angle_target=quarter, inner_radius=inner_radius, k_factor=0.5,
+             length=width, parent_panel=0, child_panel=1),
+        Bend(id=1, axis_point=np.array([0.0, base + wall]),
+             axis_dir=np.array([1.0, 0.0]),
+             angle_target=quarter, inner_radius=inner_radius, k_factor=0.5,
+             length=lip_end, parent_panel=1, child_panel=2),
+    ]
+    return _graph(panels, bends, thickness, "partial_lip_notched")
 
 
 def notched_bend(width=100.0, base=50.0, flange=30.0, notch=(40.0, 60.0),

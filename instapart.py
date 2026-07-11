@@ -287,6 +287,8 @@ if __name__ == '__main__':
     parser_bendplan.add_argument("--margin", help="collision clearance margin in mm", type=float, default=2.0)
     parser_bendplan.add_argument("-r", "--repair", help="allow repair if no valid solid is detected", action='store_true')
     parser_bendplan.add_argument("--plot", help="write diagnostic plots (fold states, YZ sections, interval strips)", action='store_true')
+    parser_bendplan.add_argument("--search", help="search bend sequences and optimise tooling setups instead of evaluating the default order", action='store_true')
+    parser_bendplan.add_argument("--solutions", help="maximum number of complete sequences to collect in search mode", type=int, default=8)
     parser_bendplan.add_argument("--json", dest="json_output", help="write the envelope report JSON to this path", type=str, default=None)
     parser_bendplan.add_argument('-v', '--verbose', help="verbose logging", action="store_const", dest="loglevel", const=logging.INFO, default=logging.WARNING)
 
@@ -471,4 +473,6 @@ if __name__ == '__main__':
                 margin=args.margin,
                 repair=args.repair,
                 plot=args.plot,
-                json_output=args.json_output)
+                json_output=args.json_output,
+                search=args.search,
+                max_solutions=args.solutions)

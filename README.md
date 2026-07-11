@@ -40,7 +40,16 @@ feasibility verdict per catalogue tool.
 ```
 python instapart.py bendplan examples/parts/SmartPart_01.stp -o ./temp --plot
 python instapart.py bendplan part.stp --punch P.88.GN --die D.V12.88 --json report.json
+python instapart.py bendplan part.stp --search --plot   # sequence + tooling optimisation
 ```
+
+With `--search` the planner explores bend orderings (memoized on the
+completed-bends bitmask), solves segmented tooling placement per setup
+(catalogue section selection via bounded-knapsack, continuous X positions,
+forbidden-zone avoidance) and ranks complete process plans
+lexicographically: setup changes > unique setups > section count >
+installed length > mass > flips.  Position invariance is exploited: several
+bends may use different stations along one fixed tooling setup.
 
 Machine and tooling come from YAML catalogues (`pressbrake/catalogue/`,
 overridable with `--machine/--punches/--dies`).  The planning core is pure

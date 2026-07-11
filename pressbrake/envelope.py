@@ -65,7 +65,11 @@ class CollisionEnvelope:
     action: object
     punch_id: str
     die_id: str
-    required: IntervalSet
+    required: IntervalSet          # true material span of the bend line
+    required_core: IntervalSet     # required shrunk by the end relief: what
+                                   # MUST be pressed (a few unsupported mm at
+                                   # bend ends is standard practice, e.g. box
+                                   # corners beside formed side walls)
     forbidden_punch: IntervalSet
     forbidden_die: IntervalSet
     forbidden_machine: IntervalSet
@@ -77,13 +81,13 @@ class CollisionEnvelope:
         """
         The machine frame is not segmentable, so any machine interference is
         fatal; punch and die material can be omitted over forbidden
-        intervals as long as the required spans stay clear.
+        intervals as long as the required core spans stay clear.
         """
         if not self.forbidden_machine.is_empty():
             return False
-        if not self.required.intersect(self.forbidden_punch).is_empty():
+        if not self.required_core.intersect(self.forbidden_punch).is_empty():
             return False
-        if not self.required.intersect(self.forbidden_die).is_empty():
+        if not self.required_core.intersect(self.forbidden_die).is_empty():
             return False
         return True
 
@@ -111,8 +115,11 @@ class CollisionEnvelope:
         return views
 
 
+DEFAULT_END_RELIEF = 5.0     # mm of bend line that may go unpressed per end
+
+
 def compute_envelope(graph, state_theta, action, punch, die, machine=None,
-                     margin=2.0):
+                     margin=2.0, end_relief=DEFAULT_END_RELIEF):
     """
     Full X-interval envelope of one bend action for one punch/die selection.
     """
@@ -207,6 +214,7 @@ def compute_envelope(graph, state_theta, action, punch, die, machine=None,
         punch_id=punch.id if punch else "",
         die_id=die.id if die else "",
         required=required,
+        required_core=shrink_intervals(required, end_relief),
         forbidden_punch=IntervalSet(hits["punch"]).buffer(margin),
         forbidden_die=IntervalSet(hits["die"]).buffer(margin),
         forbidden_machine=IntervalSet(hits["ram"] + hits["table"]),
@@ -214,6 +222,18 @@ def compute_envelope(graph, state_theta, action, punch, die, machine=None,
         x_range=(x_low, x_high),
     )
     return envelope
+
+
+def shrink_intervals(intervals, relief):
+    """
+    Pull every interval's ends in by ``relief``, capped at a quarter of the
+    span so short spans never vanish entirely.
+    """
+    pairs = []
+    for start, end in intervals.to_pairs():
+        pull = min(relief, (end - start) / 4.0)
+        pairs.append((start + pull, end - pull))
+    return IntervalSet(pairs)
 
 
 ARC_STEP = math.radians(0.5)

@@ -44,8 +44,10 @@ def load_solid(relative_path):
     if not os.path.exists(path):
         pytest.skip("sample part not available: " + relative_path)
     shape = import_step(path)
-    solids = get_shape_solids(shape, sort=True)
-    return solids[0]
+    solid = next(get_shape_solids(shape, sort=True), None)
+    if solid is None:
+        pytest.skip("no valid solid in " + relative_path)
+    return solid
 
 
 @pytest.mark.parametrize("path,expected_bends,expected_thickness", CASES)
@@ -70,15 +72,22 @@ def test_extract_counts(path, expected_bends, expected_thickness):
 @pytest.mark.parametrize("path,expected_bends,expected_thickness", CASES[:2])
 def test_folded_state_matches_brep(path, expected_bends, expected_thickness):
     """
-    Fold the extracted graph to the target angles: every folded panel plane
-    must be parallel to a planar face of the original solid within a tight
-    angular tolerance, and offset by no more than the sharp-hinge error.
+    Fold the extracted graph to the target angles and compare against the
+    original solid.  The folded state lives in the aligned flat frame (not
+    the STEP frame), so the comparison must be rigid-invariant: the pairwise
+    panel-centroid distance matrix must match the source faces' centroid
+    distances within the sharp-hinge error, and the chirality (signed
+    volume of a non-degenerate centroid quadruple) must match - a wrong
+    ANGLE_SIGN in extract.py produces a mirror image, which passes the
+    distance check but flips the handedness.
     """
     solid = load_solid(path)
     graph = extract.extract_kinematic_graph(solid, source=path)
 
-    # collect the original solid's planar face planes via the AAG traceability
     from flatten import AdjacencyGraph
+    from OCC.Core.GProp import GProp_GProps
+    from OCC.Core.BRepGProp import brepgprop
+
     aag = AdjacencyGraph(solid)
     aag.full()
     aag.smooth()
@@ -87,36 +96,65 @@ def test_folded_state_matches_brep(path, expected_bends, expected_thickness):
     theta = np.array([bend.angle_target for bend in graph.bends])
     transforms = graph.fold_transforms(theta)
 
-    max_radius = max(bend.inner_radius for bend in graph.bends)
-    offset_tolerance = 3.0 * (max_radius + graph.thickness) * (
-        1 + max(_tree_depth(graph, p.id) for p in graph.panels))
-
+    folded = []
+    source = []
     for panel in graph.panels:
-        rotation = transforms[panel.id][:3, :3]
-        folded_normal = rotation @ np.array([0.0, 0.0, 1.0])
-        point3 = transforms[panel.id] @ np.append(
-            np.append(panel.outline[0], graph.z_offset), 1.0)
+        from pressbrake.model import polygon_centroid
+        centroid2 = polygon_centroid(panel.outline)
+        point = transforms[panel.id] @ np.array(
+            [centroid2[0], centroid2[1], graph.z_offset, 1.0])
+        folded.append(point[:3])
 
-        matched = False
+        face_points = []
         for face_hash in panel.face_hashes:
             node = aag.C0_faces.nodes.get(face_hash)
             if node is None or node["convexity"] != FaceTypes.PLANAR:
                 continue
-            surface = BRepAdaptor_Surface(node["shape"])
-            if surface.GetType() != GeomAbs_Plane:
-                continue
-            plane = surface.Plane()
-            axis = plane.Axis().Direction()
-            normal = np.array([axis.X(), axis.Y(), axis.Z()])
-            location = plane.Location()
-            origin = np.array([location.X(), location.Y(), location.Z()])
+            properties = GProp_GProps()
+            brepgprop.SurfaceProperties(node["shape"], properties)
+            centre = properties.CentreOfMass()
+            face_points.append([centre.X(), centre.Y(), centre.Z()])
+        assert face_points, "panel {} has no planar source face".format(panel.id)
+        source.append(np.mean(face_points, axis=0))
 
-            parallel = abs(float(np.dot(folded_normal, normal)))
-            distance = abs(float(np.dot(point3[:3] - origin, normal)))
-            if parallel > math.cos(math.radians(2.0)) and distance < offset_tolerance:
-                matched = True
-                break
-        assert matched, "panel {} does not match any source plane".format(panel.id)
+    folded = np.array(folded)
+    source = np.array(source)
+
+    max_radius = max(bend.inner_radius for bend in graph.bends)
+    depth = 1 + max(_tree_depth(graph, p.id) for p in graph.panels)
+    tolerance = 3.0 * (max_radius + graph.thickness) * depth
+
+    # rigid-invariant shape: pairwise centroid distances
+    for i in range(len(folded)):
+        for j in range(i + 1, len(folded)):
+            folded_distance = np.linalg.norm(folded[i] - folded[j])
+            source_distance = np.linalg.norm(source[i] - source[j])
+            assert folded_distance == pytest.approx(source_distance, abs=tolerance), \
+                "panels {}-{}: folded {:.1f} vs source {:.1f}".format(
+                    i, j, folded_distance, source_distance)
+
+    # chirality: the folded part must not be the mirror image
+    if len(folded) >= 4:
+        best = None
+        for quad in _candidate_quads(len(folded)):
+            a, b, c, d = quad
+            volume = float(np.linalg.det(np.stack([
+                source[b] - source[a], source[c] - source[a], source[d] - source[a]])))
+            if best is None or abs(volume) > abs(best[1]):
+                best = (quad, volume)
+        quad, source_volume = best
+        if abs(source_volume) > tolerance ** 3 / 10.0:
+            a, b, c, d = quad
+            folded_volume = float(np.linalg.det(np.stack([
+                folded[b] - folded[a], folded[c] - folded[a], folded[d] - folded[a]])))
+            assert folded_volume * source_volume > 0, \
+                "folded part is the mirror image of the source (ANGLE_SIGN?)"
+
+
+def _candidate_quads(count, limit=40):
+    import itertools
+    quads = list(itertools.combinations(range(count), 4))
+    return quads[:limit]
 
 
 def test_rolled_part_rejected():

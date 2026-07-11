@@ -94,9 +94,91 @@ class ReportSchema(Schema):
     actions = fields.List(fields.Nested(ActionResultSchema))
 
 
+class PlacedSectionSchema(Schema):
+    length = fields.Float()
+    x_start = fields.Float()
+    x_end = fields.Float()
+    horn = fields.String(allow_none=True)
+
+
+class ToolRunSchema(Schema):
+    x_start = fields.Float()
+    x_end = fields.Float()
+    length = fields.Float()
+    sections = fields.List(fields.Nested(PlacedSectionSchema))
+
+
+class ToolPlacementSchema(Schema):
+    tool = fields.String(attribute="tool_id")
+    kind = fields.String()
+    feasible = fields.Boolean()
+    reason = fields.String()
+    section_count = fields.Integer()
+    total_length = fields.Float()
+    total_mass = fields.Float()
+    runs = fields.List(fields.Nested(ToolRunSchema))
+
+
+class SetupPlanSchema(Schema):
+    punch_id = fields.String()
+    die_id = fields.String()
+    step_indices = fields.List(fields.Integer())
+    feasible = fields.Boolean()
+    reason = fields.String()
+    punch = fields.Nested(ToolPlacementSchema, attribute="punch_placement",
+                          allow_none=True)
+    die = fields.Nested(ToolPlacementSchema, attribute="die_placement",
+                        allow_none=True)
+
+
+class ProcessStepSchema(Schema):
+    bend_ids = fields.List(fields.Integer())
+    sister_group = fields.Integer()
+    rotation = fields.Method("action_rotation")
+    flip = fields.Method("action_flip")
+
+    def action_rotation(self, step):
+        return step.action.rotation
+
+    def action_flip(self, step):
+        return bool(step.action.flip)
+
+
+class ProcessPlanSchema(Schema):
+    feasible = fields.Boolean()
+    objective = fields.Method("objective_list")
+    steps = fields.List(fields.Nested(ProcessStepSchema))
+    setups = fields.List(fields.Nested(SetupPlanSchema))
+
+    def objective_list(self, plan):
+        return list(plan.objective)
+
+
+class SearchReportSchema(Schema):
+    source = fields.String()
+    machine = fields.String(allow_none=True)
+    feasible = fields.Boolean()
+    exhaustive = fields.Boolean()
+    stats = fields.Dict()
+    graph = fields.Nested(KinematicGraphSchema)
+    plans = fields.List(fields.Nested(ProcessPlanSchema))
+
+
 def dump_report(report):
     return ReportSchema().dump(report)
 
 
 def dump_graph(graph):
     return KinematicGraphSchema().dump(graph)
+
+
+def dump_search_report(result, graph, machine_name=None):
+    return SearchReportSchema().dump({
+        "source": graph.source,
+        "machine": machine_name,
+        "feasible": result.feasible,
+        "exhaustive": result.exhaustive,
+        "stats": result.stats,
+        "graph": graph,
+        "plans": result.plans,
+    })

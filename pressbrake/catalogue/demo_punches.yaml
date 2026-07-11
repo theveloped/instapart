@@ -19,6 +19,7 @@ punches:
       - [-9.657, 10.0]
     sections:
       lengths: [10.0, 15.0, 20.0, 25.0, 40.0, 50.0, 100.0, 200.0]
+      counts: [2, 2, 2, 2, 2, 2, 2, 1]
       horns: [left, right]
       full: 835.0
 
@@ -44,6 +45,7 @@ punches:
       - [-9.657, 10.0]
     sections:
       lengths: [10.0, 15.0, 20.0, 25.0, 40.0, 50.0, 100.0, 200.0]
+      counts: [2, 2, 2, 2, 2, 2, 2, 1]
       horns: [left, right]
       full: 835.0
 
@@ -64,6 +66,7 @@ punches:
       - [-2.679, 10.0]
     sections:
       lengths: [10.0, 15.0, 20.0, 25.0, 40.0, 50.0, 100.0]
+      counts: [2, 2, 2, 2, 2, 2, 2]
       full: 835.0
 
   - id: P.RAD10
@@ -88,4 +91,5 @@ punches:
       - [10.0, 120.0]
     sections:
       lengths: [25.0, 50.0, 100.0]
+      counts: [2, 2, 2]
       full: 835.0

@@ -34,8 +34,10 @@ logger = logging.getLogger("pressbrake.extract")
 # (angle is negated for non-CONCAVE bend faces at flatten.py:1567-1569) to
 # this package's convention (positive = child subtree rotates toward the +Z
 # side of the flat pattern).  Pinned empirically by the folded-vs-BREP
-# integration test in tests/pressbrake/test_extract.py.
-ANGLE_SIGN = -1.0
+# integration test in tests/pressbrake/test_extract.py: with -1.0 the folded
+# part comes out as the mirror image of the source solid (matching pairwise
+# distances, flipped chirality); +1.0 reproduces the source handedness.
+ANGLE_SIGN = 1.0
 
 CHAIN_TOLERANCE = 1e-3
 
@@ -346,12 +348,12 @@ def _merged_bend_entity(aag, graph, component, surface_handle, transformations,
     if abs(total_angle) < 1e-9:
         raise ExtractionError("bend component has zero total angle")
 
-    reference = np.array(sub_entities[0].path[0], dtype=float)
+    reference = _point2(sub_entities[0].path[0])
     start = np.zeros(2)
     end = np.zeros(2)
     for entity in sub_entities:
-        point_a = np.array(entity.path[0], dtype=float)
-        point_b = np.array(entity.path[1], dtype=float)
+        point_a = _point2(entity.path[0])
+        point_b = _point2(entity.path[1])
         if np.linalg.norm(reference - point_a) > np.linalg.norm(reference - point_b):
             point_a, point_b = point_b, point_a
         weight = entity.angle / total_angle
@@ -415,6 +417,14 @@ def _merge_bend_zones(kinematic, bend_zones):
         panel.holes = [
             np.asarray(ring.coords[:-1], dtype=float) for ring in merged.interiors
         ]
+
+
+def _point2(point):
+    """
+    cycad.Path wraps appended coordinates in geometry.Point objects; pull
+    plain floats out regardless of representation.
+    """
+    return np.array([float(point[0]), float(point[1])])
 
 
 def _panel_side(kinematic, panel_id, axis_point, normal):

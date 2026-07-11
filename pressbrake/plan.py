@@ -129,9 +129,22 @@ def plan_graph(graph, machine=None, punches=None, dies=None, margin=2.0,
     return report
 
 
+def plan_search(graph, machine=None, punches=None, dies=None, margin=2.0,
+                springback_deg=2.0, config=None):
+    """
+    Sequence search + setup-minimising assignment: ranked ProcessPlans.
+    """
+    from pressbrake import sequence
+
+    _apply_springback(graph, math.radians(springback_deg))
+    return sequence.search_sequences(
+        graph, machine, punches or {}, dies or {}, config)
+
+
 def main(file_path, output_dir, machine_path=None, punches_path=None,
          dies_path=None, punch_id=None, die_id=None, k_factor=0.5, margin=2.0,
-         repair=False, plot=False, json_output=None):
+         repair=False, plot=False, json_output=None, search=False,
+         max_solutions=8):
     """
     CLI entry: STEP import -> extraction -> planning -> outputs.
     """
@@ -139,12 +152,12 @@ def main(file_path, output_dir, machine_path=None, punches_path=None,
     from utils import get_shape_solids, import_step
 
     shape = import_step(file_path)
-    solids = get_shape_solids(shape, sort=True, repair=repair)
-    if not solids:
+    solid = next(get_shape_solids(shape, sort=True, repair=repair), None)
+    if solid is None:
         raise RuntimeError("no valid solid in {}".format(file_path))
 
     graph = extract_kinematic_graph(
-        solids[0], k_factor=k_factor, source=os.path.basename(file_path))
+        solid, k_factor=k_factor, source=os.path.basename(file_path))
     logger.info("kinematic graph: %d panels, %d bends",
                 graph.panel_count, graph.bend_count)
 
@@ -156,10 +169,34 @@ def main(file_path, output_dir, machine_path=None, punches_path=None,
     if die_id:
         dies = {die_id: dies[die_id]}
 
+    base_name = os.path.splitext(os.path.basename(file_path))[0]
+
+    if search:
+        from pressbrake.sequence import SearchConfig
+        result = plan_search(
+            graph, machine, punches, dies, margin=margin,
+            config=SearchConfig(max_solutions=max_solutions, margin=margin))
+        _print_search_summary(result, graph)
+        json_path = json_output or os.path.join(
+            output_dir, base_name + ".bendplan.json")
+        with open(json_path, "w") as handle:
+            json.dump(serialize.dump_search_report(
+                result, graph, machine_name=machine.name), handle, indent=2)
+        logger.info("wrote %s", json_path)
+        if plot and result.plans:
+            from pressbrake import visualize
+            visualize.plot_fold_sequence(
+                graph, steps=5,
+                path=os.path.join(output_dir, base_name + ".fold.png"))
+            visualize.plot_setup_strip(
+                result.plans[0],
+                path=os.path.join(output_dir, base_name + ".setups.png"),
+                title=graph.source)
+        return result
+
     report = plan_graph(graph, machine, punches, dies, margin=margin)
     _print_summary(report)
 
-    base_name = os.path.splitext(os.path.basename(file_path))[0]
     json_path = json_output or os.path.join(
         output_dir, base_name + ".bendplan.json")
     with open(json_path, "w") as handle:
@@ -240,6 +277,27 @@ def _print_summary(report):
         else:
             print("  {}: infeasible ({})".format(
                 label, action.collision_summary or "collisions with all tools"))
+
+
+def _print_search_summary(result, graph):
+    print("bendplan search: {} ({} panels, {} bends) - {} plan(s){}".format(
+        graph.source, graph.panel_count, graph.bend_count,
+        len(result.plans), " [exhaustive]" if result.exhaustive else ""))
+    for rank, plan in enumerate(result.plans[:5], start=1):
+        order = " -> ".join(
+            "bends {}{}".format(list(step.bend_ids),
+                                " (flipped)" if step.action.flip else "")
+            for step in plan.steps)
+        print("  #{}: {} | setups: {} changes, {} sections, {:.0f} mm".format(
+            rank, order, plan.objective[0], plan.objective[2], plan.objective[3]))
+        for setup in plan.setups:
+            print("      setup {} / {}: steps {} punch runs {}".format(
+                setup.punch_id, setup.die_id, setup.step_indices,
+                [(round(r.x_start, 1), round(r.x_end, 1))
+                 for r in setup.punch_placement.runs]))
+    if not result.plans:
+        print("  no feasible sequence found ({})".format(
+            result.stats.get("reason", "collisions/tooling")))
 
 
 def _write_plots(report, output_dir, base_name):
