@@ -274,6 +274,22 @@ if __name__ == '__main__':
     parser_flatten.add_argument("--relative_volume_threshold", help="Error threshold between the relative folded and unfolded shape", type=float, default=0.025)
     # parser_flatten.add_argument("-d", "--display", help="display user interface", action='store_true')
 
+    # create the parser for the "bendplan" command
+    parser_bendplan = subparsers.add_parser('bendplan', help='press-brake bend feasibility and tooling envelope analysis')
+    parser_bendplan.add_argument('input', type=are_step_files, nargs='+', help="input file [.stp, .step]")
+    parser_bendplan.add_argument("-o", "--output", help="output directory", type=is_dir)
+    parser_bendplan.add_argument("--machine", help="machine profile YAML (default: bundled demo machine)", type=str, default=None)
+    parser_bendplan.add_argument("--punches", help="punch catalogue YAML (default: bundled demo punches)", type=str, default=None)
+    parser_bendplan.add_argument("--dies", help="die catalogue YAML (default: bundled demo dies)", type=str, default=None)
+    parser_bendplan.add_argument("--punch", help="restrict analysis to one punch id", type=str, default=None)
+    parser_bendplan.add_argument("--die", help="restrict analysis to one die id", type=str, default=None)
+    parser_bendplan.add_argument("-k", "--k_factor", help="k-factor to use during unfolding", type=float, default=0.5)
+    parser_bendplan.add_argument("--margin", help="collision clearance margin in mm", type=float, default=2.0)
+    parser_bendplan.add_argument("-r", "--repair", help="allow repair if no valid solid is detected", action='store_true')
+    parser_bendplan.add_argument("--plot", help="write diagnostic plots (fold states, YZ sections, interval strips)", action='store_true')
+    parser_bendplan.add_argument("--json", dest="json_output", help="write the envelope report JSON to this path", type=str, default=None)
+    parser_bendplan.add_argument('-v', '--verbose', help="verbose logging", action="store_const", dest="loglevel", const=logging.INFO, default=logging.WARNING)
+
     args = parse_config_args(parser)
     configure_logger(level=args.loglevel)
 
@@ -432,3 +448,27 @@ if __name__ == '__main__':
                 flatten_main(file_path, output_dir, display=display, align=True, k_factor=args.k_factor, repair=args.repair, material=args.material, check_features=args.features,
                     absolute_volume_threshold=args.absolute_volume_threshold,
                     relative_volume_threshold=args.relative_volume_threshold)
+
+    # handle press-brake planning of step files
+    elif args.command == "bendplan":
+        logger.info("Starting: BENDPLAN")
+
+        # imported lazily: bendplan additionally needs shapely + matplotlib
+        from pressbrake.plan import main as bendplan_main
+
+        for file_path in args.input:
+            output_dir = args.output or os.path.dirname(file_path)
+
+            logger.info("Bend planning {} to {}".format(file_path, output_dir))
+            bendplan_main(
+                file_path, output_dir,
+                machine_path=args.machine,
+                punches_path=args.punches,
+                dies_path=args.dies,
+                punch_id=args.punch,
+                die_id=args.die,
+                k_factor=args.k_factor,
+                margin=args.margin,
+                repair=args.repair,
+                plot=args.plot,
+                json_output=args.json_output)

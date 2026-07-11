@@ -28,6 +28,34 @@ python instapart.py explode .\examples\assy\EMO-72-07-200.stp -o .\temp
 Defaults (command, k-factor, export types, thresholds) come from
 `settings.json`; CLI arguments override it.
 
+## Press-brake planning (`pressbrake/`)
+
+The `bendplan` subcommand simulates press-brake bending of a sheet part:
+it harvests a kinematic panel/hinge graph from the unfolder (before that
+information is discarded), simulates every bend as a machine-frame air-bend
+sweep against YZ punch/die/machine profiles, and reports per-bend
+REQUIRED / OPTIONAL / FORBIDDEN machine-X tooling intervals plus a
+feasibility verdict per catalogue tool.
+
+```
+python instapart.py bendplan examples/parts/SmartPart_01.stp -o ./temp --plot
+python instapart.py bendplan part.stp --punch P.88.GN --die D.V12.88 --json report.json
+```
+
+Machine and tooling come from YAML catalogues (`pressbrake/catalogue/`,
+overridable with `--machine/--punches/--dies`).  The planning core is pure
+numpy/shapely — only the extraction step needs OCC — and its tests run
+without the conda environment:
+
+```
+python -m pytest tests/pressbrake -q            # pure-python core tests
+python -m pytest tests/pressbrake -q -m occ     # extraction tests (conda env)
+```
+
+See `pressbrake/__init__.py` for the machine-frame conventions and the
+phase 4-8 roadmap (analytic sweeps, segmented tooling solver, sequence
+search, exact BREP verification).
+
 ## Benchmark & regression harness
 
 The corpus under `examples/` (127 STEP files: single sheet parts, assemblies,
