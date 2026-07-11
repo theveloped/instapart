@@ -2590,9 +2590,8 @@ def main(
                 shape = import_step(step_path)
 
     except Exception:
-        logger.error("Could not read file and/or assembly structure")
-        # traceback.print_exc()
-        sys.exit(1)
+        logger.exception("Could not read file and/or assembly structure")
+        return False
 
     solid = None
     for solid in get_shape_solids(shape, sort=True, repair=repair):
@@ -2600,7 +2599,7 @@ def main(
 
     if not solid:
         logger.error("Could not extract a valid solid for unfolding")
-        sys.exit(1)
+        return False
 
     try:
         aag = AdjacencyGraph(solid)
@@ -2609,9 +2608,8 @@ def main(
         aag.grouped()
 
     except Exception:
-        logger.error("Could not compute shape topology")
-        # traceback.print_exc()
-        sys.exit(1)
+        logger.exception("Could not compute shape topology")
+        return False
 
     try:
         shape_data = Shape()
@@ -2621,14 +2619,14 @@ def main(
 
         if not shape_data.area:
             logger.warning("Could not detect shape thickness and/or base flange (zero surface area)")
-            sys.exit(1)
+            return False
 
         min_thickness = 2 * shape_data.volume / shape_data.area
         first_hash, second_hash, thickness = aag.get_sheet_base(min_thickness=min_thickness, display=display)
 
         if not thickness:
             logger.warning("Could not detect shape thickness and/or base flange")
-            sys.exit(1)
+            return False
 
         # Get first side graph
         graph_a = aag.get_connected_subgraph(first_hash, ignore_complex=True, display=display)
@@ -2677,7 +2675,7 @@ def main(
         # part is a bent or flat part
         if open_wire_count != 0:
             logger.warning("Part can not be interpreted as a sheet metal part")
-            sys.exit(1)
+            return False
 
         # Analyse result
         max_size = 0
@@ -2721,7 +2719,7 @@ def main(
         if relative_volume_threshold:
             if abs((volume_error) / shape_data.volume) > relative_volume_threshold:
                 logger.error("Volume error to large after unfolding")
-                sys.exit(1)
+                return False
 
         if absolute_volume_threshold:
             if abs(volume_error) > absolute_volume_threshold:
@@ -2746,11 +2744,11 @@ def main(
         else:
             pattern.save(output_path, add_text=False, dxf_type="CYCAD")
 
+        return True
 
     except Exception:
-        logger.error("Shape could not be processed")
-        # traceback.print_exc()
-        sys.exit(1)
+        logger.exception("Shape could not be processed")
+        return False
 
 
 
