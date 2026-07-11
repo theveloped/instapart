@@ -125,6 +125,11 @@ def execute(entries, jobs=1, timeout_scale=1.0, keep_artifacts=False, label=""):
     env = dict(os.environ)
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    # The pipeline has hash-order-dependent behavior (unfold side selection,
+    # occasionally classification); random per-process str hashing makes runs
+    # flip results on a handful of corpus files. Pin the seed so runs are
+    # reproducible on a given platform.
+    env["PYTHONHASHSEED"] = "0"
 
     results = []
 
