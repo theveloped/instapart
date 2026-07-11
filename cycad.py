@@ -1092,6 +1092,9 @@ class Pattern(object):
             logger.debug("Saving CYCAD DXF")
             stream = self.export_cycad(thickness=self.thickness, material=self.material, description=description, messages=messages, add_text=add_text)
 
+        else:
+            raise ValueError("unknown dxf_type %r (expected DESIGNER, TEMPLATE with a template, or CYCAD)" % dxf_type)
+
         with open(file_path, "w", encoding="utf-8") as output_file:
             output_file.write(stream.getvalue())
 

@@ -633,7 +633,7 @@ class Entity(Path):
 
             # approximation
             tolRadius = min(self.TOLLERANCE / radius, 1)
-            maxAngle = 2 * math.acos(1 - self.TOLLERANCE/radius)
+            maxAngle = 2 * math.acos(1 - tolRadius)
             nParts = int(math.ceil(abs(angle / maxAngle)))
             dAngle = angle / nParts
 

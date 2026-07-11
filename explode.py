@@ -429,7 +429,7 @@ def main(file_path, output_dir, extension="stp", explode_bodies=False, limit_bod
                         break
 
         else:
-            export_name = generate_name(input_file, part, export_names[output_dir],
+            original_name, export_name = generate_name(input_file, part, export_names[output_dir],
                     source=filename_source,
                     charset=filename_charset,
                     min_length=filename_min,
@@ -438,7 +438,7 @@ def main(file_path, output_dir, extension="stp", explode_bodies=False, limit_bod
                     prefix=filename_prefix,
                     postfix=filename_postfix
                 )
-            export_names[output_dir].append(export_name)
+            export_names[output_dir].append(original_name)
 
             output_file = "{}.{}".format(export_name, extension)
             output_path = os.path.join(output_dir, output_file)
