@@ -10,22 +10,19 @@ import copy
 import networkx as nx
 from enum import Enum
 
-from OCC.IFSelect import IFSelect_RetDone
-from OCC.ShapeFix import ShapeFix_Shape, ShapeFix_Wire
-from OCC.ShapeAnalysis import (
-    ShapeAnalysis_FreeBounds_ConnectEdgesToWires,
-    ShapeAnalysis_WireOrder,
-)
-from OCC.GCPnts import GCPnts_AbscissaPoint_Length
-from OCC.CPnts import CPnts_UniformDeflection
-from OCC.GeomAdaptor import GeomAdaptor_Curve
-from OCC.GeomProjLib import geomprojlib_Project
-from OCC.BRep import BRep_Tool_Surface
-from OCC.IFSelect import IFSelect_ItemsByEntity
+from OCC.Core.IFSelect import IFSelect_RetDone
+from OCC.Core.ShapeFix import ShapeFix_Shape, ShapeFix_Wire
+from OCC.Core.ShapeAnalysis import ShapeAnalysis_WireOrder
+from OCC.Core.GCPnts import GCPnts_AbscissaPoint
+from OCC.Core.CPnts import CPnts_UniformDeflection
+from OCC.Core.GeomAdaptor import GeomAdaptor_Curve
+from OCC.Core.GeomProjLib import geomprojlib
+from OCC.Core.BRep import BRep_Tool
+from OCC.Core.IFSelect import IFSelect_ItemsByEntity
 
-from OCC.Bnd import Bnd_Box
-from OCC.BRepBndLib import brepbndlib_Add
-from OCC.BRepBuilderAPI import (
+from OCC.Core.Bnd import Bnd_Box
+from OCC.Core.BRepBndLib import brepbndlib
+from OCC.Core.BRepBuilderAPI import (
     BRepBuilderAPI_Transform,
     BRepBuilderAPI_GTransform,
     BRepBuilderAPI_MakeEdge,
@@ -36,9 +33,9 @@ from OCC.BRepBuilderAPI import (
     BRepBuilderAPI_MakeSolid,
 )
 
-from OCC.BRepPrimAPI import BRepPrimAPI_MakePrism
-from OCC.STEPControl import STEPControl_Reader
-from OCC.TopAbs import (
+from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakePrism
+from OCC.Core.STEPControl import STEPControl_Reader
+from OCC.Core.TopAbs import (
     TopAbs_VERTEX,
     TopAbs_EDGE,
     TopAbs_FACE,
@@ -48,18 +45,13 @@ from OCC.TopAbs import (
     TopAbs_COMPOUND,
     TopAbs_COMPSOLID,
 )
-from OCC.TopoDS import (
-    topods_Solid,
-    topods_Shell,
-    topods_Face,
-    topods_Wire,
-    topods_Edge,
-    topods_Vertex,
+from OCC.Core.TopoDS import (
+    topods,
 )
-from OCC.GProp import GProp_GProps
-from OCC.BRepGProp import brepgprop_VolumeProperties, brepgprop_SurfaceProperties
+from OCC.Core.GProp import GProp_GProps
+from OCC.Core.BRepGProp import brepgprop
 
-from OCC.gp import (
+from OCC.Core.gp import (
     gp_Trsf,
     gp_Ax1,
     gp_Pln,
@@ -83,25 +75,26 @@ from OCC.gp import (
     gp_Mat2d,
 )
 
-from OCC.BRep import BRep_Tool, BRep_Tool_Surface
-from OCC.ShapeAnalysis import ShapeAnalysis_Surface
-from OCC.GeomLProp import GeomLProp_SLProps
+from OCC.Core.BRep import BRep_Tool
+from OCC.Core.ShapeAnalysis import ShapeAnalysis_Surface
+from OCC.Core.GeomLProp import GeomLProp_SLProps
 
-from OCC.BRepAdaptor import BRepAdaptor_Curve
-from OCC.BRepLProp import BRepLProp_CLProps
-from OCC.GeomLib import GeomLib_IsPlanarSurface, geomlib
+from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
+from OCC.Core.BRepLProp import BRepLProp_CLProps
+from OCC.Core.GeomLib import GeomLib_IsPlanarSurface, geomlib
 
-from OCC.BRepTools import breptools_UVBounds, breptools_OuterWire
-from OCC.BRepAdaptor import BRepAdaptor_Surface
+from OCC.Core.BRepTools import breptools
+from OCC.Core.BRepAdaptor import BRepAdaptor_Surface
 
-from OCC.TopExp import TopExp_Explorer, topexp
-from OCC.Geom import Geom_Line
-from OCC.GeomAPI import GeomAPI_IntCS
+from OCC.Core.TopExp import TopExp_Explorer, topexp
+from OCC.Core.Geom import Geom_Line
+from OCC.Core.GeomAPI import GeomAPI_IntCS
 
 
 from lxml import etree
-import StringIO
+import io as StringIO
 import ezdxf
+from ezdxf.enums import TextEntityAlignment
 
 from models import Colors, Feature
 from geometry import Point, Path, almostEqual, almostZero
@@ -413,7 +406,7 @@ class Pattern(object):
 
         # for i in range(len(self.wires)-1, -1, -1):
         for i in range(len(self.loops)):
-            brepbndlib_Add(self.loops[i].wires[0], bbox)
+            brepbndlib.Add(self.loops[i].wires[0], bbox)
 
             bb_xmin, bb_ymin, _, bb_xmax, bb_ymax, _ = bbox.Get()
             wire_size = (bb_xmax - bb_xmin) * (bb_ymax - bb_ymin)
@@ -532,8 +525,8 @@ class Pattern(object):
             self.holes.append(entity)
 
     def fix_continuity(self, edge, continuity=1):
-        from OCC.GeomAbs import GeomAbs_C1, GeomAbs_C2, GeomAbs_C3
-        from OCC.ShapeUpgrade import ShapeUpgrade_ShapeDivideContinuity
+        from OCC.Core.GeomAbs import GeomAbs_C1, GeomAbs_C2, GeomAbs_C3
+        from OCC.Core.ShapeUpgrade import ShapeUpgrade_ShapeDivideContinuity
 
         su = ShapeUpgrade_ShapeDivideContinuity(edge)
         su.SetBoundaryCriterion(eval("GeomAbs_C" + str(continuity)))
@@ -546,7 +539,7 @@ class Pattern(object):
 
         edge_explorer = TopExp_Explorer(shape, TopAbs_EDGE)
         while edge_explorer.More():
-            sub_edge = topods_Edge(edge_explorer.Current())
+            sub_edge = topods.Edge(edge_explorer.Current())
             edge_explorer.Next()
 
             curveAdaptor = BRepAdaptor_Curve(sub_edge)
@@ -567,7 +560,7 @@ class Pattern(object):
 
         edge_explorer = TopExp_Explorer(wire, TopAbs_EDGE)
         while edge_explorer.More():
-            edge = topods_Edge(edge_explorer.Current())
+            edge = topods.Edge(edge_explorer.Current())
             edge_explorer.Next()
 
             adaptor = BRepAdaptor_Curve(edge)
@@ -577,8 +570,8 @@ class Pattern(object):
 
             edge_type = EdgeTypes(adaptor.Curve().GetType())
 
-            curve_handle = BRep_Tool().Curve(edge)[0]
-            curve = curve_handle.GetObject()
+            curve_handle = BRep_Tool.Curve(edge)[0]
+            curve = curve_handle
 
             # Line, Circle, Ellipse, Hyperbola, Parabola,
             # BezierCurve, BSplineCurve, OtherCurve
@@ -610,7 +603,7 @@ class Pattern(object):
                 circle = adaptor.Circle()
                 centerPoint = circle.Location()
                 circleRadius = circle.Radius()
-                circleLength = GCPnts_AbscissaPoint_Length(adaptor)
+                circleLength = GCPnts_AbscissaPoint.Length(adaptor)
                 circleAngle = circleLength / circleRadius
 
                 # logger.debug(" - R=%0.2f, 0=%0.2f, A=%0.2f" % (circleRadius, circleLength, circleAngle))
@@ -718,12 +711,12 @@ class Pattern(object):
         # template_path = os.path.join(template_path, "templates")
         # ezdxf.options.template_dir = template_path
 
-        dwg = ezdxf.new("AC1015")
+        dwg = ezdxf.new("AC1015", setup=True)
 
-        dwg.layers.new(name="DESCRIPTION", dxfattribs={"color": 1, "linetype": "Continuous"})
-        dwg.layers.new(name="BENDS", dxfattribs={"color": 2, "linetype": "DASHED"})
-        dwg.layers.new(name="OUTLINE", dxfattribs={"color": 3, "linetype": "Continuous"})
-        dwg.layers.new(name="ENGRAVING", dxfattribs={"color": 4, "linetype": "Continuous"})
+        dwg.layers.add("DESCRIPTION", color=1, linetype="Continuous")
+        dwg.layers.add("BENDS", color=2, linetype="DASHED")
+        dwg.layers.add("OUTLINE", color=3, linetype="Continuous")
+        dwg.layers.add("ENGRAVING", color=4, linetype="Continuous")
 
         msp = dwg.modelspace()
         layers = {
@@ -738,53 +731,53 @@ class Pattern(object):
 
         # if description:
         #     yText += 1.5
-        #     msp.add_text("DESCRIPTION = %s" % (description)).set_pos(
-        #         (self.origin.x, yText), align="BOTTOM_LEFT"
+        #     msp.add_text("DESCRIPTION = %s" % (description)).set_placement(
+        #         (self.origin.x, yText), align=TextEntityAlignment.BOTTOM_LEFT
         #     ).set_dxf_attrib("layer", "DESCRIPTION")
 
         if self.quantity:
             yText += 1.5
-            msp.add_text("USERINFO3 = x%i" % (self.quantity)).set_pos(
-                (self.origin.x, yText), align="BOTTOM_LEFT"
+            msp.add_text("USERINFO3 = x%i" % (self.quantity)).set_placement(
+                (self.origin.x, yText), align=TextEntityAlignment.BOTTOM_LEFT
             ).set_dxf_attrib("layer", "DESCRIPTION")
 
         if self.date:
             yText += 1.5
-            msp.add_text("USERINFO2 = %s" % (self.date)).set_pos(
-                (self.origin.x, yText), align="BOTTOM_LEFT"
+            msp.add_text("USERINFO2 = %s" % (self.date)).set_placement(
+                (self.origin.x, yText), align=TextEntityAlignment.BOTTOM_LEFT
             ).set_dxf_attrib("layer", "DESCRIPTION")
 
         if "text" in self.label:
             yText += 1.5
-            msp.add_text("USERINFO1 = %s" % (self.label["text"])).set_pos(
-                (self.origin.x, yText), align="BOTTOM_LEFT"
+            msp.add_text("USERINFO1 = %s" % (self.label["text"])).set_placement(
+                (self.origin.x, yText), align=TextEntityAlignment.BOTTOM_LEFT
             ).set_dxf_attrib("layer", "DESCRIPTION")
 
         if self.thickness:
             yText += 1.5
-            msp.add_text("THICK = %0.2f" % (self.thickness)).set_pos(
-                (self.origin.x, yText), align="BOTTOM_LEFT"
+            msp.add_text("THICK = %0.2f" % (self.thickness)).set_placement(
+                (self.origin.x, yText), align=TextEntityAlignment.BOTTOM_LEFT
             ).set_dxf_attrib("layer", "DESCRIPTION")
 
         if self.material:
             yText += 1.5
-            msp.add_text("MATERIAL = %s" % (self.material)).set_pos(
-                (self.origin.x, yText), align="BOTTOM_LEFT"
+            msp.add_text("MATERIAL = %s" % (self.material)).set_placement(
+                (self.origin.x, yText), align=TextEntityAlignment.BOTTOM_LEFT
             ).set_dxf_attrib("layer", "DESCRIPTION")
 
         yText += 1.5
-        msp.add_text("CYCAD:ENGRAVING").set_pos(
-            (self.origin.x, yText), align="BOTTOM_LEFT"
+        msp.add_text("CYCAD:ENGRAVING").set_placement(
+            (self.origin.x, yText), align=TextEntityAlignment.BOTTOM_LEFT
         ).set_dxf_attrib("layer", "ENGRAVING")
 
         yText += 1.5
-        msp.add_text("CYCAD:OUTLINE").set_pos(
-            (self.origin.x, yText), align="BOTTOM_LEFT"
+        msp.add_text("CYCAD:OUTLINE").set_placement(
+            (self.origin.x, yText), align=TextEntityAlignment.BOTTOM_LEFT
         ).set_dxf_attrib("layer", "OUTLINE")
 
         yText += 1.5
-        msp.add_text("CYCAD:BENDS").set_pos(
-            (self.origin.x, yText), align="BOTTOM_LEFT"
+        msp.add_text("CYCAD:BENDS").set_placement(
+            (self.origin.x, yText), align=TextEntityAlignment.BOTTOM_LEFT
         ).set_dxf_attrib("layer", "BENDS")
 
         self.draw_entity(msp, self.contour, layers["contour"])
@@ -813,7 +806,7 @@ class Pattern(object):
                  'height': self.label["height"]}
                 )
 
-            text.set_pos(self.label["start"], self.label["end"], align="FIT")
+            text.set_placement(self.label["start"], self.label["end"], align=TextEntityAlignment.FIT)
             text.set_dxf_attrib("layer", layers["description"])
 
         # logger.warning("inner_fit_polygon: {}".format(self.inner_fit_polygon != None))
@@ -832,7 +825,7 @@ class Pattern(object):
     def export_dxf(self, template, material=None, thickness=None, add_text=True, description=None, messages=[]):
         logger.debug("Exporting DXF (template)")
 
-        dwg = ezdxf.new("AC1015")
+        dwg = ezdxf.new("AC1015", setup=True)
 
         layers = {}
         for layer in template["layers"]:
@@ -845,7 +838,7 @@ class Pattern(object):
                     break
 
             if layer_color and layer_linetype:
-                dwg.layers.new(name=layer["name"], dxfattribs={"color": layer_color.value, "linetype": layer_linetype})
+                dwg.layers.add(layer["name"], color=layer_color.value, linetype=layer_linetype)
 
                 for entity in layer["entities"]:
                     layers[entity.upper()] = layer["name"] 
@@ -859,20 +852,20 @@ class Pattern(object):
         yText = self.origin.y + self.height
         if self.quantity and "QUANTITY" in layers:
             yText += 1.5
-            msp.add_text("QUANTITY = %i" % (self.quantity)).set_pos(
-                (self.origin.x, yText), align="BOTTOM_LEFT"
+            msp.add_text("QUANTITY = %i" % (self.quantity)).set_placement(
+                (self.origin.x, yText), align=TextEntityAlignment.BOTTOM_LEFT
             ).set_dxf_attrib("layer", layers["QUANTITY"])
 
         if self.thickness and "THICKNESS" in layers:
             yText += 1.5
-            msp.add_text("THICKNESS = %0.2f" % (self.thickness)).set_pos(
-                (self.origin.x, yText), align="BOTTOM_LEFT"
+            msp.add_text("THICKNESS = %0.2f" % (self.thickness)).set_placement(
+                (self.origin.x, yText), align=TextEntityAlignment.BOTTOM_LEFT
             ).set_dxf_attrib("layer", layers["THICKNESS"])
 
         if self.material and "MATERIAL" in layers:
             yText += 1.5
-            msp.add_text("MATERIAL = %s" % (self.material)).set_pos(
-                (self.origin.x, yText), align="BOTTOM_LEFT"
+            msp.add_text("MATERIAL = %s" % (self.material)).set_placement(
+                (self.origin.x, yText), align=TextEntityAlignment.BOTTOM_LEFT
             ).set_dxf_attrib("layer", layers["MATERIAL"])
 
 
@@ -881,9 +874,9 @@ class Pattern(object):
         #          'height': self.label["height"]}
         #         )
 
-        #     text.set_pos(self.label["start"], self.label["end"], align="FIT")
+        #     text.set_placement(self.label["start"], self.label["end"], align=TextEntityAlignment.FIT)
         #     text.set_dxf_attrib("layer", layers["CONTOUR"])
-        #     # text.set_pos(self.label["start"], align="BOTTOM_LEFT")
+        #     # text.set_placement(self.label["start"], align=TextEntityAlignment.BOTTOM_LEFT)
         #     # text.set_dxf_attrib("layer", layers["CONTOUR"])
 
         # else:
@@ -891,7 +884,7 @@ class Pattern(object):
         #          'height': self.label["height"]}
         #         )
 
-        #     text.set_pos(self.origin, align="BOTTOM_LEFT")
+        #     text.set_placement(self.origin, align=TextEntityAlignment.BOTTOM_LEFT)
         #     text.set_dxf_attrib("layer", layers["CONTOUR"])
 
 
@@ -924,7 +917,7 @@ class Pattern(object):
                  'height': self.label["height"]}
                 )
 
-            text.set_pos(self.label["start"], self.label["end"], align="FIT")
+            text.set_placement(self.label["start"], self.label["end"], align=TextEntityAlignment.FIT)
             text.set_dxf_attrib("layer", layers["LABEL"])
 
         # logger.warning("inner_fit_polygon: {}".format(self.inner_fit_polygon != None))
@@ -942,13 +935,13 @@ class Pattern(object):
 
     def export_designer(self, application_name="BYSOFT7_DESIGNER", guid=None, measurementSystem="Metric", material=None, thickness=None, add_text=True, description=None, messages=[]):
         logger.debug("Exporting Designer DXF")
-        dwg = ezdxf.new("AC1015")
-        dwg.appids.new(application_name)
+        dwg = ezdxf.new("AC1015", setup=True)
+        dwg.appids.add(application_name)
 
-        dwg.layers.new(name="DESCRIPTION", dxfattribs={"color": 1, "linetype": "Continuous"})
-        dwg.layers.new(name="BENDLINES", dxfattribs={"color": 2, "linetype": "DASHED"})
-        dwg.layers.new(name="EXTRUSIONS", dxfattribs={"color": 3, "linetype": "Continuous"})
-        dwg.layers.new(name="GEOMETRY", dxfattribs={"color": 4, "linetype": "Continuous"})
+        dwg.layers.add("DESCRIPTION", color=1, linetype="Continuous")
+        dwg.layers.add("BENDLINES", color=2, linetype="DASHED")
+        dwg.layers.add("EXTRUSIONS", color=3, linetype="Continuous")
+        dwg.layers.add("GEOMETRY", color=4, linetype="Continuous")
 
         msp = dwg.modelspace()
         layers = {
@@ -967,16 +960,16 @@ class Pattern(object):
             for message in messages:
                 yText += 1.5
                 info_index += 1
-                text = msp.add_text("Info{} = {}".format(info_index, message["description"])).set_pos(
-                    (self.origin.x, yText), align="BOTTOM_LEFT"
+                text = msp.add_text("Info{} = {}".format(info_index, message["description"])).set_placement(
+                    (self.origin.x, yText), align=TextEntityAlignment.BOTTOM_LEFT
                 )
                 text.set_dxf_attrib("layer", layers["text"])
                 # text.set_dxf_attrib("style", "STANDARD")
 
             if description:
                 yText += 1.5
-                text = msp.add_text("Description = {}".format(description)).set_pos(
-                    (self.origin.x, yText), align="BOTTOM_LEFT"
+                text = msp.add_text("Description = {}".format(description)).set_placement(
+                    (self.origin.x, yText), align=TextEntityAlignment.BOTTOM_LEFT
                 )
                 text.set_dxf_attrib("layer", layers["text"])
                 # text.set_dxf_attrib("style", "STANDARD")
@@ -1011,7 +1004,7 @@ class Pattern(object):
             XDATA.append((1000, 'Thickness={0:.2f}'.format(thickness)))
 
         XDATA.append((1002, '}'))
-        contour_element.tags.new_xdata(application_name, XDATA)
+        contour_element.set_xdata(application_name, XDATA)
 
         # logger.debug(XDATA)
 
@@ -1031,7 +1024,7 @@ class Pattern(object):
                     (1000, 'ZHeight={:0.2f}'.format(extrusion)),
                     (1002, '}')
                 ]
-                hole_element.tags.new_xdata(application_name, XDATA)
+                hole_element.set_xdata(application_name, XDATA)
                 # logger.debug(XDATA)
 
             else:
@@ -1054,7 +1047,7 @@ class Pattern(object):
                 (1000, 'BendDeduction={:0.2f}'.format(bend_deduction)),
                 (1002, '}')
             ]
-            bend_element.tags.new_xdata(application_name, XDATA)
+            bend_element.set_xdata(application_name, XDATA)
             # logger.debug(XDATA)
 
         if len(self.bends) > 0:
@@ -1077,7 +1070,7 @@ class Pattern(object):
                  'height': self.label["height"]}
                 )
 
-            text.set_pos(self.label["start"], self.label["end"], align="FIT")
+            text.set_placement(self.label["start"], self.label["end"], align=TextEntityAlignment.FIT)
             text.set_dxf_attrib("layer", layers["text"])
 
         outputStream = StringIO.StringIO()
@@ -1099,7 +1092,7 @@ class Pattern(object):
             logger.debug("Saving CYCAD DXF")
             stream = self.export_cycad(thickness=self.thickness, material=self.material, description=description, messages=messages, add_text=add_text)
 
-        with open(file_path, "w") as output_file:
+        with open(file_path, "w", encoding="utf-8") as output_file:
             output_file.write(stream.getvalue())
 
         stream.close()
@@ -1117,11 +1110,11 @@ class Pattern(object):
             angle_degrees = 180.0 * entity.angle / math.pi
             bendText = "%0.2f/R=%0.2f/K=%0.2f" % (angle_degrees, entity.inner_radius, entity.k_factor)
 
-            msp.add_text(bendText).set_pos(
+            msp.add_text(bendText).set_placement(
                 (
                     (entity.path[0][0] + entity.path[1][0]) / 2.0,
                     (entity.path[0][1] + entity.path[1][1]) / 2.0,
-                ),  align="BOTTOM_LEFT",
+                ),  align=TextEntityAlignment.BOTTOM_LEFT,
             ).set_dxf_attrib("layer", layer)
 
         return element

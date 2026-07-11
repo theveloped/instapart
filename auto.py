@@ -24,23 +24,22 @@ from enum import Enum
 # from sklearn.cluster import KMeans
 
 # utils
-from utils import import_step, mean, get_shape_solids, get_volume, get_area, update_shape_parts, iterate_shape_parts, part_compound_shape, redirect_stdout, suppress_stdout_stderr
+from utils import import_step, mean, get_shape_solids, get_volume, get_area, update_shape_parts, iterate_shape_parts, part_compound_shape, redirect_stdout, suppress_stdout_stderr, NullTimer
 from flatten import FaceTypes, face_normal, mid_point, face_surface_handle, FaceProperties, get_solid_from_shape, get_largest_solid, referse_feature
-from marshmallow import pprint
 
 # pythonOCC imports
-from OCC.gp import gp_Vec
-from OCC.BRepAdaptor import BRepAdaptor_Surface, BRepAdaptor_HSurface
+from OCC.Core.gp import gp_Vec
+from OCC.Core.BRepAdaptor import BRepAdaptor_Surface
 
-from OCC.TopoDS import TopoDS_Compound
-from OCC.BRep import BRep_Builder
+from OCC.Core.TopoDS import TopoDS_Compound
+from OCC.Core.BRep import BRep_Builder
 
-from OCC.Bnd import Bnd_Box
-from OCC.BRepBndLib import brepbndlib_Add
-from OCC.BRepBuilderAPI import BRepBuilderAPI_MakeFace
+from OCC.Core.Bnd import Bnd_Box
+from OCC.Core.BRepBndLib import brepbndlib
+from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_MakeFace
 
-from OCC.gp import gp_Trsf, gp_Vec
-from OCC.BRepBuilderAPI import BRepBuilderAPI_Transform
+from OCC.Core.gp import gp_Trsf, gp_Vec
+from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Transform
 
 # Assembly tools
 from explode import TreeBuilder, count_parts, write_step_file
@@ -50,11 +49,11 @@ from cycad import Pattern, Entity
 from models import Job, Shape
 from schemas import JobSchema, TreeSchema, ShapeSchema, SectionSchema
 from bounding_box import get_boundingbox_dimensions
-from activate import check_license
 
 import xml.etree.ElementTree as ET
 from images import exportSVG, exportPNG
-from documents import exportPDF, exportXLS
+# documents.py (PDF/XLS export, reportlab) is not part of the ported core
+# pipeline; it is imported lazily inside the export_pdf/export_xls branches.
 
 from naming import generate_name
 
@@ -147,9 +146,9 @@ def main(file_path, output_dir,
 
         absolute_volume_threshold=5.0,
         relative_volume_threshold=0.025,
+        timings=None,
     ):
-
-    check_license(meter_attribute="auto")
+    timings = timings or NullTimer()
     job_data = Job(file_path, output_dir)
     input_file = os.path.basename(file_path)
     input_file = input_file.rsplit(".", 1)[0]
@@ -158,7 +157,7 @@ def main(file_path, output_dir,
         export_names[output_dir] = [input_file]
 
     try:
-        with suppress_stdout_stderr():
+        with timings.stage("import"), suppress_stdout_stderr():
             builder = TreeBuilder(file_path)
             job_data.tree = builder.compute(ignore_duplicates=False, root=input_file, display=display)
 
@@ -175,8 +174,8 @@ def main(file_path, output_dir,
         job_data.messages.append(message)
 
         output_file = "{}.json".format(input_file)
-        with open(os.path.join(output_dir, output_file), 'w') as json_file:
-            job_json = JobSchema().dumps(job_data).data
+        with open(os.path.join(output_dir, output_file), 'w', encoding='utf-8') as json_file:
+            job_json = JobSchema().dumps(job_data)
             job_parsed = json.loads(job_json)
             json.dump(job_parsed, json_file, indent=2, sort_keys=True)
 
@@ -239,10 +238,11 @@ def main(file_path, output_dir,
                 display.DisplayShape(solid, update=True, color="white", transparency=0.8)
 
             try:
-                aag = AdjacencyGraph(solid)
-                aag.full()
-                aag.smooth()
-                aag.grouped()
+                with timings.stage("topology"):
+                    aag = AdjacencyGraph(solid)
+                    aag.full()
+                    aag.smooth()
+                    aag.grouped()
 
             except Exception:
                 traceback.print_exc()
@@ -263,7 +263,8 @@ def main(file_path, output_dir,
             try:
                 # Tube parts
                 shape_data = Shape()
-                section_data = analyse_shape(aag, display=None)
+                with timings.stage("classify"):
+                    section_data = analyse_shape(aag, display=None)
 
                 # section_json = SectionSchema().dump(section_data).data
                 # pprint(section_json)
@@ -274,7 +275,8 @@ def main(file_path, output_dir,
                 shape_data.width, shape_data.height, shape_data.length = get_boundingbox_dimensions(solid, use_mesh=False)
 
                 min_thickness = 2 * shape_data.volume / shape_data.area
-                first_hash, second_hash, thickness = aag.get_sheet_base(min_thickness=min_thickness, display=display)
+                with timings.stage("classify"):
+                    first_hash, second_hash, thickness = aag.get_sheet_base(min_thickness=min_thickness, display=display)
                 if not thickness:
                     logger.warning("Could not detect shape thickness and/or base flange")
 
@@ -327,20 +329,22 @@ def main(file_path, output_dir,
 
                 # compute transformations to unfold graph
                 if unfold_a:
-                    surface_handle, transformations, base_reversed = aag.unfold_graph(graph_a, thickness, base_hash=first_hash, align=align, display=None, k_factor=k_factor)
-                    features = aag.project_features(features, surface_handle, unfold_a=unfold_a, transformations=transformations, display=display)
-                    wires, open_wire_count, loops = aag.extract_wires(graph_a, surface_handle, thickness, transformations=transformations, k_factor=k_factor, features=features, featured_edges=featured_edges, display=display)
-                    bends = aag.extract_bends(graph_a, surface_handle, thickness, transformations=transformations, reversed=base_reversed, display=display, k_factor=k_factor, combine_bends=combine_bends)
+                    with timings.stage("unfold"):
+                        surface_handle, transformations, base_reversed = aag.unfold_graph(graph_a, thickness, base_hash=first_hash, align=align, display=None, k_factor=k_factor)
+                        features = aag.project_features(features, surface_handle, unfold_a=unfold_a, transformations=transformations, display=display)
+                        wires, open_wire_count, loops = aag.extract_wires(graph_a, surface_handle, thickness, transformations=transformations, k_factor=k_factor, features=features, featured_edges=featured_edges, display=display)
+                        bends = aag.extract_bends(graph_a, surface_handle, thickness, transformations=transformations, reversed=base_reversed, display=display, k_factor=k_factor, combine_bends=combine_bends)
                     shape_data.bends = bends
 
                 else:
                     for feature in features:
                         feature.reverse()
 
-                    surface_handle, transformations, base_reversed = aag.unfold_graph(graph_b, thickness, base_hash=second_hash, align=align, display=None, k_factor=k_factor)
-                    features = aag.project_features(features, surface_handle, unfold_a=unfold_a, transformations=transformations, display=display)
-                    wires, open_wire_count, loops = aag.extract_wires(graph_b, surface_handle, thickness, transformations=transformations, k_factor=k_factor, features=features, featured_edges=featured_edges, display=display)
-                    bends = aag.extract_bends(graph_b, surface_handle, thickness, transformations=transformations, reversed=base_reversed, display=display, k_factor=k_factor, combine_bends=combine_bends)
+                    with timings.stage("unfold"):
+                        surface_handle, transformations, base_reversed = aag.unfold_graph(graph_b, thickness, base_hash=second_hash, align=align, display=None, k_factor=k_factor)
+                        features = aag.project_features(features, surface_handle, unfold_a=unfold_a, transformations=transformations, display=display)
+                        wires, open_wire_count, loops = aag.extract_wires(graph_b, surface_handle, thickness, transformations=transformations, k_factor=k_factor, features=features, featured_edges=featured_edges, display=display)
+                        bends = aag.extract_bends(graph_b, surface_handle, thickness, transformations=transformations, reversed=base_reversed, display=display, k_factor=k_factor, combine_bends=combine_bends)
                     shape_data.bends = bends
 
 
@@ -387,7 +391,7 @@ def main(file_path, output_dir,
                     max_index = 0
                     bbox = Bnd_Box()
                     for i in range(len(loops)):
-                        brepbndlib_Add(loops[i].wires[0], bbox)
+                        brepbndlib.Add(loops[i].wires[0], bbox)
                         bb_xmin, bb_ymin, _, bb_xmax, bb_ymax, _ = bbox.Get()
                         wire_size = (bb_xmax - bb_xmin) * (bb_ymax - bb_ymin)
 
@@ -456,28 +460,30 @@ def main(file_path, output_dir,
                                 shape_data.messages.append(message)
 
                         description = "{}x, {:0.2f}mm, {}, {}, {}".format(part.count, thickness, file_path, part.name, solid_index)
-                        pattern = Pattern(thickness=thickness, wires=wires, bends=bends, loops=loops, material=material, quantity=part.count, date=date)
-                        pattern.origin = [bb_xmin, bb_ymin]
-                        pattern.width = bb_xmax - bb_xmin
-                        pattern.height = bb_ymax - bb_ymin
-                        pattern.parse_wires()
+                        with timings.stage("export"):
+                            pattern = Pattern(thickness=thickness, wires=wires, bends=bends, loops=loops, material=material, quantity=part.count, date=date)
+                            pattern.origin = [bb_xmin, bb_ymin]
+                            pattern.width = bb_xmax - bb_xmin
+                            pattern.height = bb_ymax - bb_ymin
+                            pattern.parse_wires()
 
-                        if label_text:
-                            pattern.place_label(text=label_text, font_height=label_height, gravity_angle=4.7)
+                            if label_text:
+                                pattern.place_label(text=label_text, font_height=label_height, gravity_angle=4.7)
 
-                        if bysoft_autopart:
-                            pattern.save(output_path, description=description, messages=shape_data.messages, add_text=False, dxf_type="DESIGNER")
+                            if bysoft_autopart:
+                                pattern.save(output_path, description=description, messages=shape_data.messages, add_text=False, dxf_type="DESIGNER")
 
-                        elif export_template:
-                            pattern.save(output_path, description=description, messages=shape_data.messages, add_text=False, dxf_type="TEMPLATE", template=export_template)
+                            elif export_template:
+                                pattern.save(output_path, description=description, messages=shape_data.messages, add_text=False, dxf_type="TEMPLATE", template=export_template)
 
-                        else:
-                            pattern.save(output_path, description=description, messages=shape_data.messages, add_text=False, dxf_type="CYCAD")
+                            else:
+                                pattern.save(output_path, description=description, messages=shape_data.messages, add_text=False, dxf_type="CYCAD")
 
                         solid_files.append({"path": output_path})
 
 
                         if export_pdf:
+                            from documents import exportPDF  # not ported; clear error if requested
                             output_file = "{}.pdf".format(export_name)
                             output_path = os.path.join(output_dir, output_file)
                             solid_files.append({"path": output_path})
@@ -635,14 +641,15 @@ def main(file_path, output_dir,
 
     sys.setrecursionlimit(250000)
     if export_xls:
+        from documents import exportXLS  # not ported; clear error if requested
         output_file = "{}.xls".format(input_file)
         output_path = os.path.join(output_dir, output_file)
         exportXLS(job_data.tree, output_path)
 
     output_file = "{}.json".format(input_file)
     output_path = os.path.join(output_dir, output_file)
-    with open(output_path, 'w') as json_file:
-        job_json = JobSchema().dumps(job_data).data
+    with open(output_path, 'w', encoding='utf-8') as json_file:
+        job_json = JobSchema().dumps(job_data)
         job_parsed = json.loads(job_json)
         json.dump(job_parsed, json_file, indent=2, sort_keys=True)
 

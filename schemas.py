@@ -4,12 +4,15 @@
 from __future__ import print_function
 
 import datetime
-from marshmallow import Schema, fields, pprint
-from OCC.gp import gp_Pnt, gp_Dir, gp_Vec
+from marshmallow import Schema, fields, EXCLUDE
+from OCC.Core.gp import gp_Pnt, gp_Dir, gp_Vec
 
 
 
 class LayerSchema(Schema):
+    class Meta:
+        unknown = EXCLUDE  # template JSON may carry extra keys (mm3 default is RAISE)
+
     name = fields.Str()
     color = fields.Str()
     linetype = fields.Str()
@@ -18,14 +21,14 @@ class LayerSchema(Schema):
 
 
 class TemplateSchema(Schema):
+    class Meta:
+        unknown = EXCLUDE
+
     layers = fields.Nested(LayerSchema, many=True)
 
 
 class KeyField(fields.Int):
-    def __init__(self, *args, **kwargs):
-        super(KeyField, self).__init__(format="uuid", *args, **kwargs)
-
-    def _serialize(self, value, attr, obj):
+    def _serialize(self, value, attr, obj, **kwargs):
 
         if value:
             return value
@@ -38,15 +41,15 @@ class DateTimeField(fields.DateTime):
     def __init__(self, *args, **kwargs):
         super(DateTimeField, self).__init__(*args, **kwargs)
 
-    def _serialize(self, value, attr, obj):
+    def _serialize(self, value, attr, obj, **kwargs):
         if not value:
             value = datetime.datetime.now()
 
-        return super(DateTimeField, self)._serialize(value, attr, obj)
+        return super(DateTimeField, self)._serialize(value, attr, obj, **kwargs)
 
 
 class EnumField(fields.String):
-    def _serialize(self, value, attr, obj):
+    def _serialize(self, value, attr, obj, **kwargs):
         if value != None:
             return value.name
 
@@ -58,7 +61,7 @@ class PointField(fields.List):
     def __init__(self, *args, **kwargs):
         super(PointField, self).__init__(fields.Float(), *args, **kwargs)
 
-    def _serialize(self, value, attr, obj):
+    def _serialize(self, value, attr, obj, **kwargs):
         if value != None:
             if value.bulge:
                 return [value.x, value.y, value.bulge]
@@ -99,10 +102,10 @@ class EntitySchema(BaseSchema):
 
 
 class BendSchema(BaseSchema):
-    common_id = fields.Int(dump_to="group")
+    common_id = fields.Int(data_key="group")
     angle = fields.Float()
     length = fields.Float()
-    inner_radius = fields.Float(dump_to="radius")
+    inner_radius = fields.Float(data_key="radius")
 
 
 class FeatureSchema(BaseSchema):

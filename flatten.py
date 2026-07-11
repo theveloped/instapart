@@ -19,19 +19,20 @@ import traceback
 import networkx as nx
 from enum import Enum
 
-from OCC.IFSelect import IFSelect_RetDone
-from OCC.ShapeFix import ShapeFix_Shape, ShapeFix_Wire, ShapeFix_Edge
-from OCC.ShapeAnalysis import ShapeAnalysis_FreeBounds_ConnectEdgesToWires, ShapeAnalysis_WireOrder
-from OCC.GCPnts import GCPnts_AbscissaPoint_Length
-from OCC.CPnts import CPnts_UniformDeflection
-from OCC.GeomAdaptor import GeomAdaptor_Curve
-from OCC.GeomProjLib import geomprojlib_Project
-from OCC.BRep import BRep_Tool_Surface
-from OCC.IFSelect import IFSelect_ItemsByEntity
+from OCC.Core.IFSelect import IFSelect_RetDone
+from OCC.Core.ShapeFix import ShapeFix_Shape, ShapeFix_Wire, ShapeFix_Edge
+from OCC.Core.ShapeAnalysis import ShapeAnalysis_WireOrder
+from OCC.Core.GCPnts import GCPnts_AbscissaPoint
+from OCC.Core.CPnts import CPnts_UniformDeflection
+from OCC.Core.GeomAdaptor import GeomAdaptor_Curve
+from OCC.Core.GeomProjLib import geomprojlib
+from OCC.Core.BRep import BRep_Tool
+from OCC.Core.GeomAbs import GeomAbs_G1
+from OCC.Core.IFSelect import IFSelect_ItemsByEntity
 
-from OCC.Bnd import Bnd_Box
-from OCC.BRepBndLib import brepbndlib_Add
-from OCC.BRepBuilderAPI import (BRepBuilderAPI_Transform,
+from OCC.Core.Bnd import Bnd_Box
+from OCC.Core.BRepBndLib import brepbndlib
+from OCC.Core.BRepBuilderAPI import (BRepBuilderAPI_Transform,
                                 BRepBuilderAPI_GTransform,
                                 BRepBuilderAPI_MakeEdge,
                                 BRepBuilderAPI_MakeWire,
@@ -40,15 +41,15 @@ from OCC.BRepBuilderAPI import (BRepBuilderAPI_Transform,
                                 BRepBuilderAPI_Sewing,
                                 BRepBuilderAPI_MakeSolid)
 
-from OCC.BRepPrimAPI import BRepPrimAPI_MakePrism
-from OCC.STEPControl import STEPControl_Reader
-from OCC.TopAbs import (TopAbs_VERTEX, TopAbs_EDGE, TopAbs_FACE, TopAbs_WIRE,
+from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakePrism
+from OCC.Core.STEPControl import STEPControl_Reader
+from OCC.Core.TopAbs import (TopAbs_VERTEX, TopAbs_EDGE, TopAbs_FACE, TopAbs_WIRE,
                         TopAbs_SHELL, TopAbs_SOLID, TopAbs_COMPOUND, TopAbs_COMPSOLID)
-from OCC.TopoDS import topods_Solid, topods_Shell, topods_Face, topods_Wire, topods_Edge, topods_Vertex
-from OCC.GProp import GProp_GProps
-from OCC.BRepGProp import brepgprop_VolumeProperties, brepgprop_SurfaceProperties
+from OCC.Core.TopoDS import topods
+from OCC.Core.GProp import GProp_GProps
+from OCC.Core.BRepGProp import brepgprop
 
-from OCC.gp import (gp_Trsf, gp_Ax1, gp_Pln,
+from OCC.Core.gp import (gp_Trsf, gp_Ax1, gp_Pln,
                     gp_Ax3, gp_GTrsf, gp_Vec,
                     gp_Dir, gp_Pnt, gp_Origin,
                     gp_DZ, gp_Ax2d, gp_Pnt2d,
@@ -57,31 +58,30 @@ from OCC.gp import (gp_Trsf, gp_Ax1, gp_Pln,
                     gp_GTrsf2d, gp_Mat, gp_Trsf2d,
                     gp_Mat2d, gp_Ax2)
 
-from OCC.BRep import BRep_Tool, BRep_Tool_Surface
-from OCC.ShapeAnalysis import ShapeAnalysis_Surface, ShapeAnalysis_Curve,  ShapeAnalysis_Edge
-from OCC.GeomLProp import GeomLProp_SLProps
+from OCC.Core.BRep import BRep_Tool
+from OCC.Core.ShapeAnalysis import ShapeAnalysis_Surface, ShapeAnalysis_Curve,  ShapeAnalysis_Edge
+from OCC.Core.GeomLProp import GeomLProp_SLProps
 
-from OCC.BRepAdaptor import BRepAdaptor_Curve
-from OCC.BRepLProp import BRepLProp_CLProps
-from OCC.GeomLib import GeomLib_IsPlanarSurface, geomlib
+from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
+from OCC.Core.BRepLProp import BRepLProp_CLProps
+from OCC.Core.GeomLib import GeomLib_IsPlanarSurface, geomlib
 
-from OCC.BRepTools import breptools_UVBounds, breptools_OuterWire
-from OCC.BRepAdaptor import BRepAdaptor_Surface
+from OCC.Core.BRepTools import breptools
+from OCC.Core.BRepAdaptor import BRepAdaptor_Surface
 
-from OCC.TopExp import TopExp_Explorer, topexp
-from OCC.Geom import Geom_Line
-from OCC.GeomAPI import GeomAPI_IntCS, GeomAPI_ProjectPointOnCurve
-from OCC.Geom2dAPI import Geom2dAPI_ProjectPointOnCurve
+from OCC.Core.TopExp import TopExp_Explorer, topexp
+from OCC.Core.Geom import Geom_Line
+from OCC.Core.GeomAPI import GeomAPI_IntCS, GeomAPI_ProjectPointOnCurve
+from OCC.Core.Geom2dAPI import Geom2dAPI_ProjectPointOnCurve
 
-from OCC.BRepAlgo import BRepAlgo_NormalProjection
+from OCC.Core.BRepAlgo import BRepAlgo_NormalProjection
 
 from cycad import Pattern, Entity
 from models import Loop, Shape, Feature
 from bounding_box import get_boundingbox_dimensions
 
 # utils
-from activate import check_license
-from utils import import_step, get_area, get_volume, get_shape_solids, redirect_stdout, suppress_stdout_stderr
+from utils import import_step, get_area, get_volume, get_shape_solids, redirect_stdout, suppress_stdout_stderr, shape_hash
 
 import logging
 logger = logging.getLogger()
@@ -89,7 +89,6 @@ logger = logging.getLogger()
 #===========================================================================
 # Global default settings
 #===========================================================================
-HASH_INTEGER = 1000000000
 TOLLERANCE = 1e-6
 
 #===========================================================================
@@ -98,7 +97,7 @@ TOLLERANCE = 1e-6
 def fix_shape(shp, tolerance=1e-3):
     fix = ShapeFix_Shape(shp)
     fix.SetFixFreeShellMode(True)
-    sf = fix.FixShellTool().GetObject()
+    sf = fix.FixShellTool()
     sf.SetFixOrientationMode(True)
     fix.LimitTolerance(tolerance)
     fix.Perform()
@@ -115,7 +114,7 @@ def fix_edge(edge):
 #     Compute area of face
 #     """
 #     props = GProp_GProps()
-#     brepgprop_SurfaceProperties(shape, props)
+#     brepgprop.SurfaceProperties(shape, props)
 #     return props.Mass()
 
 
@@ -124,7 +123,7 @@ def fix_edge(edge):
 #     Compute volume of solid
 #     """
 #     props = GProp_GProps()
-#     brepgprop_VolumeProperties(shape, props)
+#     brepgprop.VolumeProperties(shape, props)
 #     return props.Mass()
 
 
@@ -162,8 +161,8 @@ def pcurve(edge, face):
     computes the 2d parametric spline that lies on the surface of the face
     :return: Geom2d_Curve, u, v
     """
-    crv, u, v = BRep_Tool().CurveOnSurface(edge, face)
-    return crv.GetObject(), u, v
+    crv, u, v = BRep_Tool.CurveOnSurface(edge, face)
+    return crv, u, v
 
 
 def mean(numbers):
@@ -177,7 +176,7 @@ def domain(face):
     '''the u,v domain of the curve
     :return: UMin, UMax, VMin, VMax
     '''
-    return breptools_UVBounds(face)
+    return breptools.UVBounds(face)
 
 
 def mid_point(face):
@@ -203,12 +202,12 @@ def wire_edge_pairs(wire, label=None):
 
     edge_explorer = TopExp_Explorer(wire, TopAbs_EDGE)
 
-    first_edge = topods_Edge(edge_explorer.Current())
+    first_edge = topods.Edge(edge_explorer.Current())
     prev_edge = first_edge
     edge_explorer.Next()
 
     while edge_explorer.More():
-        current_edge = topods_Edge(edge_explorer.Current())
+        current_edge = topods.Edge(edge_explorer.Current())
 
         yield (prev_edge, current_edge, label)
         prev_edge = current_edge
@@ -224,21 +223,21 @@ def face_edge_pairs(face_shape):
     of a face. edges are grouped in concecutive pairs and
     their respective wire_hash
     """
-    outer_wire = breptools_OuterWire(face_shape)
+    outer_wire = breptools.OuterWire(face_shape)
     wire_explorer = TopExp_Explorer(face_shape, TopAbs_WIRE)
 
     # Return out wire
-    wire_hash = outer_wire.HashCode(HASH_INTEGER)
+    wire_hash = shape_hash(outer_wire)
     for edge_pair in wire_edge_pairs(outer_wire, label=wire_hash):
         yield edge_pair
 
     # Return iner wires
     while wire_explorer.More():
-        current_wire = topods_Wire(wire_explorer.Current())
+        current_wire = topods.Wire(wire_explorer.Current())
 
         # If inner wire return
         if not current_wire.IsSame(outer_wire):
-            wire_hash = current_wire.HashCode(HASH_INTEGER)
+            wire_hash = shape_hash(current_wire)
 
             # Return all pairs
             for edge_pair in wire_edge_pairs(current_wire, label=wire_hash):
@@ -273,7 +272,7 @@ def wire_edges(wire_shape, ignore_orientation=False):
     is_first = True
     edge_explorer = TopExp_Explorer(wire_shape, TopAbs_EDGE)
     while edge_explorer.More():
-        current_edge = topods_Edge(edge_explorer.Current())
+        current_edge = topods.Edge(edge_explorer.Current())
 
         yield (current_edge, is_first, is_reversed)
 
@@ -294,7 +293,7 @@ def face_edges(face_shape, ignore_orientation=False):
     wire_explorer = TopExp_Explorer(face_shape, TopAbs_WIRE)
 
     while wire_explorer.More():
-        current_wire = topods_Wire(wire_explorer.Current())
+        current_wire = topods.Wire(wire_explorer.Current())
 
         # Return all pairs
         for current_edge, is_first, is_reversed in wire_edges(current_wire, ignore_orientation=ignore_orientation):
@@ -325,14 +324,14 @@ def face_surface_handle(face):
     """
     :return: surface handle belonging to a face
     """
-    return BRep_Tool_Surface(face)
+    return BRep_Tool.Surface(face)
 
 
 def face_surface(surface_handle):
     """
     :return: surface by surface handle
     """
-    return surface_handle.GetObject()
+    return surface_handle
 
 
 def point_to_parameter(point, surface_handle, TOLLERANCE=TOLLERANCE):
@@ -349,7 +348,7 @@ def continuity_edge_face(edge, face_a, face_b):
     """
     :return: Continuity between two adjacent faces along a given edge
     """
-    tool = BRep_Tool()
+    tool = BRep_Tool
     if tool.HasContinuity(edge, face_a, face_b):
         return True, 1
 
@@ -588,12 +587,34 @@ class AdjacencyGraph(object):
         self.areas = []
 
 
+    # Angular tolerance for geometric tangency detection (radians, ~0.57deg)
+    SMOOTH_ANGLE_TOLERANCE = 1e-2
+
     def edge_continuity(self, edge, node_a, node_b):
         """
         :return: return the degree of continuity of two nodes along an edge
         """
-        tool = BRep_Tool()
+        # OCCT 7.x records continuity on edges where 6.9 stored nothing, so a
+        # bare HasContinuity() now also fires for sharp (C0) edges. Check the
+        # actual regularity level: smooth means G1 or better.
+        tool = BRep_Tool
+        smooth = False
         if tool.HasContinuity(edge, node_a["shape"], node_b["shape"]):
+            smooth = tool.Continuity(edge, node_a["shape"], node_b["shape"]) >= GeomAbs_G1
+
+        if not smooth:
+            # Some exporters ship STEP files without any G1 regularity records
+            # (and the 7.x reader then marks the edges C0), so trusting the
+            # records alone drops genuinely tangent connections — verify
+            # tangency geometrically by comparing outward normals on the edge.
+            try:
+                normal_a = calculating_normal_on_edge(node_a["shape"], edge)
+                normal_b = calculating_normal_on_edge(node_b["shape"], edge)
+                smooth = normal_a.Angle(normal_b) < self.SMOOTH_ANGLE_TOLERANCE
+            except Exception:
+                smooth = False
+
+        if smooth:
             if abs(node_a["curvature"] - node_b["curvature"]) <= self.TOLLERANCE:
                 if node_a["convexity"] == FaceTypes.COMPLEX or node_b["convexity"] == FaceTypes.COMPLEX:
                     return -2
@@ -656,8 +677,8 @@ class AdjacencyGraph(object):
         edge_edges = []
         solid_explorer = TopExp_Explorer(self.shape, TopAbs_FACE)
         while solid_explorer.More():
-            face = topods_Face(solid_explorer.Current())
-            face_hash = face.HashCode(HASH_INTEGER)
+            face = topods.Face(solid_explorer.Current())
+            face_hash = shape_hash(face)
             solid_explorer.Next()
 
             # areas of faces
@@ -667,15 +688,15 @@ class AdjacencyGraph(object):
             # add face + attributes to graph
             convexity, curvature, radii, directions = face_convexity(face)
             graph_faces.add_node(face_hash, shape=face, convexity=convexity, curvature=curvature, radii=radii, directions=directions, bend_radius=None, k_factor=None)
-            face_node = graph_faces.node[face_hash]
+            face_node = graph_faces.nodes[face_hash]
 
             # Loop over all edges of current face
             for edge, is_first, is_reversed in face_edges(face, ignore_orientation=False):
-                edge_hash = edge.HashCode(HASH_INTEGER)
+                edge_hash = shape_hash(edge)
 
                 first_vertex, last_vertex = edge_end_vertices(edge, ignore_orientation=False)
-                first_hash = first_vertex.HashCode(HASH_INTEGER)
-                last_hash = last_vertex.HashCode(HASH_INTEGER)
+                first_hash = shape_hash(first_vertex)
+                last_hash = shape_hash(last_vertex)
 
                 # Add the first vertex to the edge graph
                 if is_first and not graph_edges.has_node(first_hash):
@@ -692,8 +713,8 @@ class AdjacencyGraph(object):
                 # Handle second face adjacent to edge
                 else:
                     other_face = graph_edges[first_hash][last_hash][edge_hash]["faces"][0]
-                    other_face_hash = other_face.HashCode(HASH_INTEGER)
-                    other_face_node = graph_faces.node[other_face_hash]
+                    other_face_hash = shape_hash(other_face)
+                    other_face_node = graph_faces.nodes[other_face_hash]
                     edge_continuity = self.edge_continuity(edge, face_node, other_face_node)
 
                     # Add face and loop data to edge adjecency graph
@@ -753,7 +774,7 @@ class AdjacencyGraph(object):
             complex_hashes = []
 
             for node_hash in component:
-                node = self.C1_faces.node[node_hash]
+                node = self.C1_faces.nodes[node_hash]
 
                 if node["convexity"] == FaceTypes.COMPLEX:
                     logger.debug("removing %s becouse it is a complex face" % (node_hash))
@@ -772,7 +793,7 @@ class AdjacencyGraph(object):
 
         if display:
             for node_hash in sub_graph.nodes():
-                node = self.C1_faces.node[node_hash]
+                node = self.C1_faces.nodes[node_hash]
 
                 # if node["convexity"] != FaceTypes.PLANAR:
                     # display.DisplayShape(node["shape"], update=True, color="green")
@@ -792,7 +813,7 @@ class AdjacencyGraph(object):
 
         if display:
             for node_hash in sub_graph.nodes():
-                node = self.C1_faces.node[node_hash]
+                node = self.C1_faces.nodes[node_hash]
 
                 if node["convexity"] != FaceTypes.PLANAR:
                     display.DisplayShape(node["shape"], update=True, color="green")
@@ -812,29 +833,29 @@ class AdjacencyGraph(object):
     #     # Loop over all featuers
     #     for feature in features:
     #         logger.debug(feature)
-    #         node = self.C0_faces.node[feature["base_a"]]
+    #         node = self.C0_faces.nodes[feature["base_a"]]
     #         node_scale = self.node_scale(node, thickness, k_factor=k_factor)
 
     #         for edge in feature["wire"].wire_edges(ignore_orientation=False):
     #             pass
 
         # for node_hash in graph.nodes():
-        #         node = graph.node[node_hash]
+        #         node = graph.nodes[node_hash]
         #         node_scale = self.node_scale(node, thickness, k_factor=k_factor)
 
         #         for edge in wire_edges
 
         #         # Loop over all edges, with internal wires grouped
         #         for edge, is_first, is_reversed in face_edges(node["shape"]):
-        #             edge_hash = edge.HashCode(HASH_INTEGER)
+        #             edge_hash = shape_hash(edge)
 
         #             if edge_hash in used_edge_hashes:
         #                 continue
 
         #             # Potential start edge
         #             first_vertex, start_vertex = edge_end_vertices(edge, ignore_orientation=True)
-        #             first_vertex_hash = first_vertex.HashCode(HASH_INTEGER)
-        #             start_vertex_hash = start_vertex.HashCode(HASH_INTEGER)
+        #             first_vertex_hash = shape_hash(first_vertex)
+        #             start_vertex_hash = shape_hash(start_vertex)
 
         #             # Wire is allready closed (circle, etc.)
         #             if first_vertex_hash == start_vertex_hash:
@@ -863,20 +884,20 @@ class AdjacencyGraph(object):
 
         # Loop over all nodes (faces) in the graph
         for node_hash in graph.nodes():
-                node = graph.node[node_hash]
+                node = graph.nodes[node_hash]
                 node_scale = self.node_scale(node, thickness, k_factor=k_factor)
 
                 # Loop over all edges, with internal wires grouped
                 for edge, is_first, is_reversed in face_edges(node["shape"]):
-                    edge_hash = edge.HashCode(HASH_INTEGER)
+                    edge_hash = shape_hash(edge)
 
                     if edge_hash in used_edge_hashes:
                         continue
 
                     # Potential start edge
                     first_vertex, start_vertex = edge_end_vertices(edge, ignore_orientation=True)
-                    first_vertex_hash = first_vertex.HashCode(HASH_INTEGER)
-                    start_vertex_hash = start_vertex.HashCode(HASH_INTEGER)
+                    first_vertex_hash = shape_hash(first_vertex)
+                    start_vertex_hash = shape_hash(start_vertex)
 
                     # Wire is allready closed (circle, etc.)
                     if first_vertex_hash == start_vertex_hash:
@@ -934,7 +955,7 @@ class AdjacencyGraph(object):
 
                             for connected_vertex_hash in connected_edges:
                                 connected_vertex_node = self.C1_edges[current_vertex_hash][connected_vertex_hash]
-                                current_vertex = self.C1_edges.node[current_vertex_hash]["shape"]
+                                current_vertex = self.C1_edges.nodes[current_vertex_hash]["shape"]
 
                                 for connected_hash in connected_vertex_node:
                                     connected_node = connected_vertex_node[connected_hash]
@@ -950,8 +971,8 @@ class AdjacencyGraph(object):
                                                 current_loop.add(feature=feature)
                                                 break
 
-                                    face_hash_a = connected_node["faces"][0].HashCode(HASH_INTEGER)
-                                    face_hash_b = connected_node["faces"][1].HashCode(HASH_INTEGER)
+                                    face_hash_a = shape_hash(connected_node["faces"][0])
+                                    face_hash_b = shape_hash(connected_node["faces"][1])
 
                                     is_connected_a = graph.has_node(face_hash_a)
                                     is_connected_b = graph.has_node(face_hash_b)
@@ -970,7 +991,7 @@ class AdjacencyGraph(object):
 
                                         current_edge = connected_node["shape"]
                                         if is_connected_a:
-                                            face_node = self.C1_faces.node[face_hash_a]
+                                            face_node = self.C1_faces.nodes[face_hash_a]
                                             face_scale = self.node_scale(face_node, thickness, k_factor=k_factor)
                                             local_edge = self.transformed_edge(current_edge, connected_node["faces"][0], surface_handle, scale=face_scale, transformations=transformations[face_hash_a])
 
@@ -984,7 +1005,7 @@ class AdjacencyGraph(object):
 
                                             #     display.DisplayShape(local_start_point, update=True, color="green")
                                         else:
-                                            face_node = self.C1_faces.node[face_hash_b]
+                                            face_node = self.C1_faces.nodes[face_hash_b]
                                             face_scale = self.node_scale(face_node, thickness, k_factor=k_factor)
                                             local_edge = self.transformed_edge(current_edge, connected_node["faces"][1], surface_handle, scale=face_scale, transformations=transformations[face_hash_b])
 
@@ -1155,13 +1176,13 @@ class AdjacencyGraph(object):
         applying the transformations
         """
         # Retrieve the pcurve on the cylindrical surface
-        p_curve_handle, u, v = BRep_Tool().CurveOnSurface(edge, face)
+        p_curve_handle, u, v = BRep_Tool.CurveOnSurface(edge, face)
 
         # non-uniform resizing (maintain currect surface area of unrolled face)
         if scale:
             # Get original end-points
-            first_uv_point = p_curve_handle.GetObject().Value(u)
-            last_uv_point = p_curve_handle.GetObject().Value(v)
+            first_uv_point = p_curve_handle.Value(u)
+            last_uv_point = p_curve_handle.Value(v)
 
             # Gtransform to allow non-uniform scaling
             transformation_2d = gp_GTrsf2d()
@@ -1190,7 +1211,7 @@ class AdjacencyGraph(object):
         for transformation in transformations:
             edge = BRepBuilderAPI_Transform(edge, transformation).Shape()
 
-        edge = topods_Edge(edge)
+        edge = topods.Edge(edge)
         edge = fix_edge(edge)
 
         return edge
@@ -1216,7 +1237,7 @@ class AdjacencyGraph(object):
         for transformation in transformations:
             vertex = BRepBuilderAPI_Transform(vertex, transformation).Shape()
 
-        return topods_Vertex(vertex)
+        return topods.Vertex(vertex)
 
 
     def plot_transformed_face(self, face, surface_handle, transformations=[], scale=None, direction=None, color="white"):
@@ -1284,7 +1305,7 @@ class AdjacencyGraph(object):
 
         if not align:
             # Compute surface to unfold other faces to
-            base_node = self.C1_faces.node[base_hash]
+            base_node = self.C1_faces.nodes[base_hash]
             base_face = base_node["shape"]
             base_surface_handle = face_surface_handle(base_face)
             base_props = FaceProperties(base_surface_handle)
@@ -1294,7 +1315,7 @@ class AdjacencyGraph(object):
 
         else:
             # Compute surface to unfold 2D plane
-            base_node = self.C1_faces.node[base_hash]
+            base_node = self.C1_faces.nodes[base_hash]
             base_normal = gp_Vec(gp_DZ())
             base_plane = gp_Pln(gp_Origin(), gp_DZ())
             base_face = BRepBuilderAPI_MakeFace(base_plane).Face()
@@ -1322,8 +1343,8 @@ class AdjacencyGraph(object):
                 edge_shape = edge_node["shape"]
 
                 # Get networkX nodes of the faces
-                predecessor_node = self.C1_faces.node[predecessor_hash]
-                successor_node = self.C1_faces.node[successor_hash]
+                predecessor_node = self.C1_faces.nodes[predecessor_hash]
+                successor_node = self.C1_faces.nodes[successor_hash]
 
                 # Scaling factors
                 predecessor_scale = self.node_scale(predecessor_node, thickness, k_factor=k_factor)
@@ -1379,11 +1400,11 @@ class AdjacencyGraph(object):
             minimum = float("inf")
             maximum = float("-inf")
 
-            surface_handle = BRep_Tool_Surface(face)
+            surface_handle = BRep_Tool.Surface(face)
             interference = boolean_common(edge, face)
             topo_explorer = TopExp_Explorer(interference, TopAbs_VERTEX)
             while topo_explorer.More():
-                current_vertex = topods_Vertex(topo_explorer.Current())
+                current_vertex = topods.Vertex(topo_explorer.Current())
                 current_point = BRep_Tool.Pnt(current_vertex)
 
                 current_values = list(point_to_parameter(current_point, surface_handle))
@@ -1574,7 +1595,7 @@ class AdjacencyGraph(object):
             if node_hash in used_edge_hashes:
                 continue
 
-            node = graph.node[node_hash]
+            node = graph.nodes[node_hash]
             used_edge_hashes.add(node_hash)
 
             if node["convexity"] != FaceTypes.PLANAR:
@@ -1597,7 +1618,7 @@ class AdjacencyGraph(object):
                         total_angle = 0.0
                         for node_hash in component:
 
-                            node = graph.node[node_hash]
+                            node = graph.nodes[node_hash]
                             used_edge_hashes.add(node_hash)
 
                             bend = self.extract_bend(node, node_hash, surface_handle, thickness, transformations=transformations, reversed=reversed, display=display, k_factor=k_factor)
@@ -1671,11 +1692,11 @@ class AdjacencyGraph(object):
 
         # Loop over all nodes (faces) in the graph
         for node_hash in graph.nodes():
-            node = graph.node[node_hash]
+            node = graph.nodes[node_hash]
 
             # Loop over all edges, with internal wires grouped
             for edge, is_first, is_reversed in face_edges(node["shape"]):
-                edge_hash = edge.HashCode(HASH_INTEGER)
+                edge_hash = shape_hash(edge)
 
                 if edge_hash in used_edge_hashes:
                     continue
@@ -1697,7 +1718,7 @@ class AdjacencyGraph(object):
 
         # First side (largest face)
         first_area, first_hash = sorted_areas[0]
-        first_node = self.C1_faces.node[first_hash]
+        first_node = self.C1_faces.nodes[first_hash]
         first_face = first_node["shape"]
         first_point = mid_point(first_face)
         first_normal = calculating_normal_at_point(first_face, first_point)
@@ -1709,7 +1730,7 @@ class AdjacencyGraph(object):
         used_hashes.add(first_hash)
         for i in range(1, len(sorted_areas)):
             current_area, current_hash = sorted_areas[i]
-            current_node = self.C1_faces.node[current_hash]
+            current_node = self.C1_faces.nodes[current_hash]
 
             if current_hash in used_hashes:
                 continue
@@ -1720,7 +1741,7 @@ class AdjacencyGraph(object):
                 current_surface_handle = face_surface_handle(current_face)
 
                 ray = Geom_Line(gp_Lin(first_point, gp_Dir(first_normal)))
-                intersection = GeomAPI_IntCS(ray.GetHandle(), current_surface_handle)
+                intersection = GeomAPI_IntCS(ray, current_surface_handle)
 
                 if not intersection.IsDone() or intersection.NbPoints() == 0:
                     continue
@@ -1779,7 +1800,7 @@ class AdjacencyGraph(object):
             thickness = 0.0
 
         elif display:
-            second_node = self.C1_faces.node[second_hash]
+            second_node = self.C1_faces.nodes[second_hash]
             second_face = second_node["shape"]
             display.DisplayShape(second_face, update=True, color="green")
 
@@ -1799,18 +1820,18 @@ class AdjacencyGraph(object):
                 display.DisplayShape(edge["shape"], update=True, color="green")
 
                 # if node_a in self.node_labels.keys():
-                #     display.DisplayShape(feature_graph.node[node_b]["shape"], update=True, color="red")
+                #     display.DisplayShape(feature_graph.nodes[node_b]["shape"], update=True, color="red")
                 # else:
-                #     display.DisplayShape(feature_graph.node[node_a]["shape"], update=True, color="red")
+                #     display.DisplayShape(feature_graph.nodes[node_a]["shape"], update=True, color="red")
 
             elif abs(abs(edge["angle"]) - math.pi / 4) < (math.pi / 180):
                 logger.debug("FORTYFIVE", edge)
                 display.DisplayShape(edge["shape"], update=True, color="blue")
 
                 # if node_a in self.node_labels.keys():
-                #     display.DisplayShape(feature_graph.node[node_b]["shape"], update=True, color="blue")
+                #     display.DisplayShape(feature_graph.nodes[node_b]["shape"], update=True, color="blue")
                 # else:
-                #     display.DisplayShape(feature_graph.node[node_a]["shape"], update=True, color="blue")
+                #     display.DisplayShape(feature_graph.nodes[node_a]["shape"], update=True, color="blue")
 
             else:
                 logger.debug("OTHER", edge)
@@ -1986,7 +2007,7 @@ class AdjacencyGraph(object):
             base_hash = feature.base_b[0]
 
         # Retrieve the face the feature is cut into
-        base_node = self.C0_faces.node[base_hash]
+        base_node = self.C0_faces.nodes[base_hash]
         base_face = base_node["shape"]
 
         # Project edges to the original face
@@ -2023,8 +2044,8 @@ class AdjacencyGraph(object):
         # Loop over all edges (C0_faces.edges does not accout for two shapes linked by two different edges)
         options = {}
         for feature_hash in feature.component:
-            feature_face = self.C0_faces.node[feature_hash]["shape"]
-            face_hash = feature_face.HashCode(HASH_INTEGER)
+            feature_face = self.C0_faces.nodes[feature_hash]["shape"]
+            face_hash = shape_hash(feature_face)
 
             # Determine group the face is in
             for i in range(len(feature.groups)):
@@ -2034,8 +2055,8 @@ class AdjacencyGraph(object):
 
             edge_explorer = TopExp_Explorer(feature_face, TopAbs_EDGE)
             while edge_explorer.More():
-                edge = topods_Edge(edge_explorer.Current())
-                edge_hash = edge.HashCode(HASH_INTEGER)
+                edge = topods.Edge(edge_explorer.Current())
+                edge_hash = shape_hash(edge)
 
                 if edge_hash in options:
 
@@ -2070,7 +2091,7 @@ class AdjacencyGraph(object):
         edges = []
         edge_explorer = TopExp_Explorer(projected_edges, TopAbs_EDGE)
         while edge_explorer.More():
-            edge = topods_Edge(edge_explorer.Current())
+            edge = topods.Edge(edge_explorer.Current())
 
             if surface_handle and base_hash in transformations:
                 local_edge = self.transformed_edge(edge, base_face, surface_handle, transformations=transformations[base_hash])
@@ -2093,12 +2114,12 @@ class AdjacencyGraph(object):
 
 
     def project_feature_old(self, base_hash, component, display=None):
-        from OCC.HLRBRep import HLRBRep_Algo, HLRBRep_HLRToShape
-        from OCC.HLRAlgo import HLRAlgo_Projector
-        from OCC.GCPnts import GCPnts_QuasiUniformDeflection
+        from OCC.Core.HLRBRep import HLRBRep_Algo, HLRBRep_HLRToShape
+        from OCC.Core.HLRAlgo import HLRAlgo_Projector
+        from OCC.Core.GCPnts import GCPnts_QuasiUniformDeflection
 
         # Preprocessing base
-        base_node = self.C0_faces.node[base_hash]
+        base_node = self.C0_faces.nodes[base_hash]
         base_face = base_node["shape"]
         base_point = mid_point(base_face)
         base_normal = calculating_normal_at_point(base_face, base_point)
@@ -2106,7 +2127,7 @@ class AdjacencyGraph(object):
         # Stitch feature
         sewing = BRepBuilderAPI_Sewing()
         for feature_hash in component:
-            feature_face = self.C0_faces.node[feature_hash]["shape"]
+            feature_face = self.C0_faces.nodes[feature_hash]["shape"]
             sewing.Add(feature_face)
         sewing.Perform()
         shape = sewing.SewedShape()
@@ -2126,7 +2147,7 @@ class AdjacencyGraph(object):
         hlr.Update()
         hlr.Hide()
 
-        hlr_shapes = HLRBRep_HLRToShape(hlr.GetHandle())
+        hlr_shapes = HLRBRep_HLRToShape(hlr)
 
         visible = []
 
@@ -2348,7 +2369,7 @@ def stitch_shape(shape):
     face_explorer = TopExp_Explorer(shape, TopAbs_FACE)
 
     while face_explorer.More():
-        current_face = topods_Face(face_explorer.Current())
+        current_face = topods.Face(face_explorer.Current())
         sewing.Add(current_face)
         face_explorer.Next()
 
@@ -2358,7 +2379,7 @@ def stitch_shape(shape):
     if sewed_shape.ShapeType() != TopAbs_SHELL:
         return None
 
-    shell = topods_Shell(sewed_shape)
+    shell = topods.Shell(sewed_shape)
     builder = BRepBuilderAPI_MakeSolid(shell)
     shape = builder.Shape()
 
@@ -2374,7 +2395,7 @@ def get_largest_solid(shape):
     max_volume = 0
     solid_explorer = TopExp_Explorer(shape, TopAbs_SOLID)
     while solid_explorer.More():
-        current_solid = topods_Solid(solid_explorer.Current())
+        current_solid = topods.Solid(solid_explorer.Current())
         current_volume = get_volume(current_solid)
 
         if current_volume > max_volume:
@@ -2391,7 +2412,7 @@ def stitch_shell(shape):
     max_volume = 0
     shell_explorer = TopExp_Explorer(shape, TopAbs_SHELL)
     while shell_explorer.More():
-        current_shell = topods_Shell(shell_explorer.Current())
+        current_shell = topods.Shell(shell_explorer.Current())
         solid = stitch_shape(current_shell)
         shell_explorer.Next()
 
@@ -2465,9 +2486,9 @@ def shapeTypeString(shape):
 
 # Get the center line of a face (e.g. bend line of a bend face)
 # -> Edge
-from OCC.GC import GC_MakeSegment
-from OCC.TopAbs import TopAbs_VERTEX
-from OCC.ShapeAnalysis import ShapeAnalysis_Surface
+from OCC.Core.GC import GC_MakeSegment
+from OCC.Core.TopAbs import TopAbs_VERTEX
+from OCC.Core.ShapeAnalysis import ShapeAnalysis_Surface
 def face_center_line(face, trim_line=True):
     face_domain = domain(face)
     adaptor = BRepAdaptor_Surface(face)
@@ -2483,11 +2504,11 @@ def face_center_line(face, trim_line=True):
         yMin = float("inf")
         yMax = float("-inf")
 
-        surface_handle = BRep_Tool_Surface(face)
+        surface_handle = BRep_Tool.Surface(face)
         interference = boolean_common(edge, face)
         topo_explorer = TopExp_Explorer(interference, TopAbs_VERTEX)
         while topo_explorer.More():
-            current_vertex = topods_Vertex(topo_explorer.Current())
+            current_vertex = topods.Vertex(topo_explorer.Current())
             current_point = BRep_Tool.Pnt(current_vertex)
 
             _, yCurrent = point_to_parameter(current_point, surface_handle)
@@ -2507,7 +2528,7 @@ def face_center_line(face, trim_line=True):
     return edge
 
 # Boolean intersect (common area) of two shapes
-from OCC.BRepAlgoAPI import BRepAlgoAPI_Common
+from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Common
 def boolean_common(shape, other_shape):
     common = BRepAlgoAPI_Common(shape, other_shape)
     # common.SetFuzzyValue(1e-3)
@@ -2560,7 +2581,6 @@ def main(
     ):
 
     # Import step file
-    check_license(meter_attribute="flatten")
 
     try:
         # with open(os.devnull, 'w') as devnull:
@@ -2660,7 +2680,7 @@ def main(
         max_index = 0
         bbox = Bnd_Box()
         for i in range(len(loops)):
-            brepbndlib_Add(loops[i].wires[0], bbox)
+            brepbndlib.Add(loops[i].wires[0], bbox)
             bb_xmin, bb_ymin, _, bb_xmax, bb_ymax, _ = bbox.Get()
             wire_size = (bb_xmax - bb_xmin) * (bb_ymax - bb_ymin)
 

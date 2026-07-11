@@ -1,16 +1,13 @@
 # -*- coding: utf-8 -*-
-from __future__ import print_function
-
-from OCC.TDocStd import Handle_TDocStd_Document
-from OCC.XCAFApp import XCAFApp_Application
-from OCC.XCAFDoc import XCAFDoc_DocumentTool_ShapeTool
-from OCC.STEPCAFControl import STEPCAFControl_Reader
-from OCC.IFSelect import IFSelect_RetDone
-from OCC.TDF import TDF_LabelSequence, TDF_Label, TDF_Tool
-from OCC.TDataStd import Handle_TDataStd_Name, TDataStd_Name_GetID
-from OCC.TCollection import TCollection_ExtendedString, TCollection_AsciiString
-from OCC.TopLoc import TopLoc_Location
-from OCC.BRepBuilderAPI import BRepBuilderAPI_Transform
+from OCC.Core.TDocStd import TDocStd_Document
+from OCC.Core.XCAFDoc import XCAFDoc_DocumentTool, XCAFDoc_ShapeTool
+from OCC.Core.STEPCAFControl import STEPCAFControl_Reader
+from OCC.Core.IFSelect import IFSelect_RetDone
+from OCC.Core.TDF import TDF_LabelSequence, TDF_Label, TDF_Tool, TDF_AttributeIterator
+from OCC.Core.TDataStd import TDataStd_Name
+from OCC.Core.TCollection import TCollection_ExtendedString, TCollection_AsciiString
+from OCC.Core.TopLoc import TopLoc_Location
+from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Transform
 
 import os
 import sys
@@ -18,19 +15,17 @@ import json
 import traceback
 
 # export
-from OCC.STEPControl import STEPControl_Writer
-from OCC.Interface import Interface_Static_SetCVal
-from OCC.STEPControl import STEPControl_AsIs
+from OCC.Core.STEPControl import STEPControl_Writer
+from OCC.Core.Interface import Interface_Static
+from OCC.Core.STEPControl import STEPControl_AsIs
 
-from OCC.TopoDS import TopoDS_Compound
-from OCC.BRep import BRep_Builder
+from OCC.Core.TopoDS import TopoDS_Compound
+from OCC.Core.BRep import BRep_Builder
 
 import uuid
-HASH_INTEGER = 1000000000
 
 # utils
-from utils import get_rondom_color, iterate_shape_parts, part_compound_shape, get_shape_solids, redirect_stdout, suppress_stdout_stderr, sanitize_filename
-from activate import check_license
+from utils import get_rondom_color, iterate_shape_parts, part_compound_shape, get_shape_solids, redirect_stdout, suppress_stdout_stderr, sanitize_filename, shape_hash
 from naming import generate_name
 
 import logging
@@ -85,18 +80,16 @@ class TreeBuilder(object):
         self.part_index = 0
         self.references = {}
 
-        # create an handle to a document
-        h_doc = Handle_TDocStd_Document()
-
-        # Create the application
-        app = XCAFApp_Application.GetApplication().GetObject()
-        app.NewDocument(TCollection_ExtendedString("MDTV-CAF"), h_doc)
-
-        # Get root assembly
-        doc = h_doc.GetObject()
-        self.h_shape_tool = XCAFDoc_DocumentTool_ShapeTool(doc.Main())
-        # self.h_color_tool = XCAFDoc_DocumentTool_ColorTool(doc.Main())
-        # self.h_material_tool = XCAFDoc_DocumentTool_MaterialTool(doc.Main())
+        # Create the document (handles are transparent since pythonocc 7.x;
+        # no XCAFApp application needed for reading). Pass a plain str: the
+        # pythonocc 7.9 TCollection_ExtendedString overload hard-crashes here.
+        # The document must stay referenced on self or the shape tool ends up
+        # pointing into a freed document (empty GetFreeShapes).
+        self.doc = TDocStd_Document("MDTV-CAF")
+        doc = self.doc
+        self.shape_tool = XCAFDoc_DocumentTool.ShapeTool(doc.Main())
+        # self.color_tool = XCAFDoc_DocumentTool.ColorTool(doc.Main())
+        # self.material_tool = XCAFDoc_DocumentTool.MaterialTool(doc.Main())
 
         with suppress_stdout_stderr():
 
@@ -108,22 +101,18 @@ class TreeBuilder(object):
 
             status = step_reader.ReadFile(filename)
             if status == IFSelect_RetDone:
-                step_reader.Transfer(doc.GetHandle())
+                step_reader.Transfer(doc)
 
-            self.shape_tool = self.h_shape_tool.GetObject()
-            self.shape_tool.SetAutoNaming(True)
+            XCAFDoc_ShapeTool.SetAutoNaming(True)
 
     def get_label_name(self, lab):
-        entry = TCollection_AsciiString()
-        TDF_Tool.Entry(lab, entry)
-        N = Handle_TDataStd_Name()
-        lab.FindAttribute(TDataStd_Name_GetID(), N)
-        n = N.GetObject()
-        if n:
-            return sanitize_filename(unicode(n.Get().PrintToString(), errors='ignore'))
+        # pythonocc 7.x wraps the TDataStd_Name lookup as a label helper
+        # (FindAttribute with an out-handle is not callable from Python here)
+        name = lab.GetLabelName()
+        if name:
+            return sanitize_filename(name)
 
-        else:
-            return "No Name"
+        return "No Name"
 
     def getComponents(self, parent, ignore_duplicates=False, display=None):
         components = []
@@ -150,11 +139,11 @@ class TreeBuilder(object):
         shapes = []
         shape = self.shape_tool.GetShape(part.label)
 
-        shape_hash = shape.HashCode(HASH_INTEGER)
-        if shape_hash not in self.references:
-            self.references[shape_hash] = part.index
+        reference_hash = shape_hash(shape)
+        if reference_hash not in self.references:
+            self.references[reference_hash] = part.index
 
-        part.reference = self.references[shape_hash]
+        part.reference = self.references[reference_hash]
         part.shape = shape
 
         # Transformation paramaters of shape
@@ -251,7 +240,7 @@ class TreeBuilder(object):
 
     def compute(self, root=None, ignore_duplicates=False, display=None):
         labels = TDF_LabelSequence()
-        self.h_shape_tool.GetObject().GetFreeShapes(labels)
+        self.shape_tool.GetFreeShapes(labels)
 
         # In rare cases muliple labels are present in root
         if labels.Length() > 1:
@@ -282,7 +271,7 @@ class TreeBuilder(object):
 
     def find(self, index):
         labels = TDF_LabelSequence()
-        self.h_shape_tool.GetObject().GetFreeShapes(labels)
+        self.shape_tool.GetFreeShapes(labels)
         shape = self.findPart(labels.Value(1), index=index)
         return shape
 
@@ -305,7 +294,7 @@ def write_step_file(a_shape, filename, application_protocol="AP203"):
 
     # creates and initialise the step exporter
     step_writer = STEPControl_Writer()
-    Interface_Static_SetCVal("write.step.schema", application_protocol)
+    Interface_Static.SetCVal("write.step.schema", application_protocol)
 
     # transfer shapes and write file
     step_writer.Transfer(a_shape, STEPControl_AsIs)
@@ -385,8 +374,6 @@ def main(file_path, output_dir, extension="stp", explode_bodies=False, limit_bod
             filename_postfix=None,
             export_names={}
         ):
-    check_license(meter_attribute="explode")
-
     input_file = os.path.basename(file_path)
     input_file = input_file.rsplit(".", 1)[0]
     if output_dir not in export_names:

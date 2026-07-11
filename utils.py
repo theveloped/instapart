@@ -8,9 +8,6 @@ the ``__doc__`` attribute. This is also what you'll see if you call
 help() on a module or any other Python object.
 """
 
-# compatibility imports
-from __future__ import print_function
-
 # general imports
 import os
 import sys
@@ -20,19 +17,19 @@ from contextlib import contextmanager
 from random import randint
 
 # pythonOCC imports
-from OCC.IFSelect import IFSelect_RetDone
-from OCC.STEPControl import STEPControl_Reader
+from OCC.Core.IFSelect import IFSelect_RetDone
+from OCC.Core.STEPControl import STEPControl_Reader
 
-from OCC.BRepBuilderAPI import BRepBuilderAPI_Sewing, BRepBuilderAPI_MakeSolid
-from OCC.TopExp import TopExp_Explorer
-from OCC.TopoDS import topods_Solid, topods_Shell, topods_Face, topods_Wire, topods_Edge, topods_Vertex
-from OCC.TopAbs import (TopAbs_VERTEX, TopAbs_EDGE, TopAbs_FACE, TopAbs_WIRE,
-                        TopAbs_SHELL, TopAbs_SOLID, TopAbs_COMPOUND, TopAbs_COMPSOLID)
-from OCC.GProp import GProp_GProps
-from OCC.BRepGProp import brepgprop_VolumeProperties, brepgprop_SurfaceProperties
+from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Sewing, BRepBuilderAPI_MakeSolid
+from OCC.Core.TopExp import TopExp_Explorer
+from OCC.Core.TopoDS import topods
+from OCC.Core.TopAbs import (TopAbs_VERTEX, TopAbs_EDGE, TopAbs_FACE, TopAbs_WIRE,
+                             TopAbs_SHELL, TopAbs_SOLID, TopAbs_COMPOUND, TopAbs_COMPSOLID)
+from OCC.Core.GProp import GProp_GProps
+from OCC.Core.BRepGProp import brepgprop
 
-from OCC.TopoDS import TopoDS_Compound
-from OCC.BRep import BRep_Builder
+from OCC.Core.TopoDS import TopoDS_Compound
+from OCC.Core.BRep import BRep_Builder
 
 import re
 import logging
@@ -54,7 +51,7 @@ def supress_stdout(func):
     return wrapper
 
 def sanitize_filename(filename):
-   filename = re.sub('[^\w\-_\. ]', '_', filename)
+   filename = re.sub(r'[^\w\-_\. ]', '_', filename)
    return filename
 
 class suppress_stdout_stderr(object):
@@ -87,6 +84,60 @@ class suppress_stdout_stderr(object):
             os.close(fd)
 
 
+class StageTimer(object):
+    """Accumulates wall time per pipeline stage.
+
+    Used by the benchmark harness: auto.main takes an optional StageTimer so
+    the production pipeline times itself and the harness never has to mirror
+    the call sequence. If progress_path is given, the current stage name is
+    flushed to that file on entry so a native crash can be attributed.
+    """
+
+    def __init__(self, progress_path=None):
+        self.times = {}
+        self.progress_path = progress_path
+
+    @contextmanager
+    def stage(self, name):
+        from time import perf_counter
+        if self.progress_path:
+            try:
+                with open(self.progress_path, "w") as fh:
+                    fh.write('{"stage": "%s"}' % name)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+            except OSError:
+                pass
+        start = perf_counter()
+        try:
+            yield
+        finally:
+            self.times[name] = self.times.get(name, 0.0) + perf_counter() - start
+
+
+@contextmanager
+def _null_stage(name):
+    yield
+
+
+class NullTimer(object):
+    """No-op StageTimer stand-in."""
+
+    times = {}
+
+    def stage(self, name):
+        return _null_stage(name)
+
+
+def shape_hash(shape):
+    """Stable identity key for a TopoDS_Shape, replacing the removed
+    shape.HashCode(upper) API (OCCT 7.8+). pythonocc wires __hash__ to
+    std::hash<TopoDS_Shape>, which keys on TShape + Location and ignores
+    orientation — the same identity semantics the AAG relied on.
+    """
+    return hash(shape)
+
+
 def get_rondom_color():
     """Return a random color string for rendering using pythonOCC"""
 
@@ -105,7 +156,7 @@ def get_area(shape, TOLLERANCE=1e-5):
 
     try:
         props = GProp_GProps()
-        brepgprop_SurfaceProperties(shape, props, TOLLERANCE)
+        brepgprop.SurfaceProperties(shape, props, TOLLERANCE)
         return props.Mass()
 
     except Exception:
@@ -119,7 +170,7 @@ def get_volume(shape, TOLLERANCE=1e-5):
 
     try:
         props = GProp_GProps()
-        brepgprop_VolumeProperties(shape, props, TOLLERANCE)
+        brepgprop.VolumeProperties(shape, props, TOLLERANCE)
         return props.Mass()
 
     except Exception:
@@ -158,7 +209,7 @@ def stitch_shape_solids(shape):
 
     contains_shapes = False
     while face_explorer.More():
-        current_face = topods_Face(face_explorer.Current())
+        current_face = topods.Face(face_explorer.Current())
         sewing.Add(current_face)
         face_explorer.Next()
         contains_shapes = True
@@ -170,7 +221,7 @@ def stitch_shape_solids(shape):
         sewed_shape = sewing.SewedShape()
 
         if sewed_shape.ShapeType() == TopAbs_SHELL:
-            shell = topods_Shell(sewed_shape)
+            shell = topods.Shell(sewed_shape)
             builder = BRepBuilderAPI_MakeSolid(shell)
             shape = builder.Shape()
 
@@ -182,7 +233,7 @@ def stitch_shell_solids(shape, sort=False):
     solids = []
     shell_explorer = TopExp_Explorer(shape, TopAbs_SHELL)
     while shell_explorer.More():
-        current_shell = topods_Shell(shell_explorer.Current())
+        current_shell = topods.Shell(shell_explorer.Current())
 
         for solid in stitch_shape_solids(current_shell):
             if sort:
@@ -204,7 +255,7 @@ def iterate_solids(shape, sort=False):
     solids = []
     solid_explorer = TopExp_Explorer(shape, TopAbs_SOLID)
     while solid_explorer.More():
-        solid = topods_Solid(solid_explorer.Current())
+        solid = topods.Solid(solid_explorer.Current())
 
         if sort:
             solids.append(solid)

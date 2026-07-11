@@ -18,15 +18,14 @@ import sys
 from random import randint
 import math
 import networkx as nx
-from sklearn.cluster import KMeans
 
 # utils
 from utils import import_step, mean
 from flatten import AdjacencyGraph, FaceTypes, face_normal, mid_point, face_surface_handle, FaceProperties, get_solid_from_shape, get_largest_solid
 
 # pythonOCC imports
-from OCC.gp import gp_Vec
-from OCC.BRepAdaptor import BRepAdaptor_Surface, BRepAdaptor_HSurface
+from OCC.Core.gp import gp_Vec
+from OCC.Core.BRepAdaptor import BRepAdaptor_Surface
 
 # Assembly tools
 from models import Shape, Section
@@ -44,57 +43,77 @@ def get_rondom_color():
 
 
 def grouped_graph(graph, base_hash, node_labels={}, node_groups={}):
+    """Contract all C2-connected face groups of the C1 component around base.
+
+    Rewritten from the legacy incremental merge, which was edge-order
+    dependent (edges arrive in hash-ordered set order, and a C2 edge between
+    two not-yet-seen nodes never merged), making tube classification
+    nondeterministic per process. Computing connected components of the
+    continuity==2 subgraph is order-independent and expresses the same
+    intent: one node per multi-face bend / cylinder ring.
+    """
     component = nx.node_connected_component(graph.C1_faces, base_hash)
-    grouped_graph = nx.Graph()
+    subgraph = graph.C1_faces.subgraph(component)
 
-    grouped_graph.add_node(base_hash, shapes=[base_hash])
-    node_labels[base_hash] = base_hash
-    node_groups[base_hash] = [base_hash]
+    c2_graph = nx.Graph()
+    c2_graph.add_nodes_from(component)
+    c2_graph.add_edges_from(
+        (node_a, node_b)
+        for node_a, node_b, continuity in subgraph.edges(data="continuity")
+        if continuity == 2 and node_a != node_b
+    )
 
-    for node_a, node_b, continuity in graph.C1_faces.edges(nbunch=component, data="continuity"):
+    grouped = nx.Graph()
+    for group in nx.connected_components(c2_graph):
+        members = list(group)
+        leader = base_hash if base_hash in group else members[0]
+        grouped.add_node(leader, shapes=members)
+        node_groups[leader] = members
+        for member in members:
+            node_labels[member] = leader
 
-        # Avoid error if contracting node with itself (round tube with one face)
-        if node_a == node_b:
-            continue
+    for node_a, node_b in subgraph.edges():
+        leader_a, leader_b = node_labels[node_a], node_labels[node_b]
+        # intra-group C1 edges are group-internal, not cycles between groups
+        if leader_a != leader_b:
+            grouped.add_edge(leader_a, leader_b)
 
-        elif node_a in node_labels and node_b in node_labels:
-            if continuity == 2:
-                node_groups[node_labels[node_a]] += node_groups[node_labels[node_b]]
-                grouped_graph.node[node_labels[node_a]]["shapes"] += grouped_graph.node[node_labels[node_b]]["shapes"]
-                grouped_graph = nx.contracted_nodes(grouped_graph, node_labels[node_a], node_labels[node_b], self_loops=False)
+    return grouped, component
 
-                for old_nodes in node_groups[node_labels[node_b]]:
-                    node_labels[old_nodes] = node_labels[node_a]
 
-            grouped_graph.add_edge(node_labels[node_a], node_labels[node_b])
-            continue
 
-        elif node_a in node_labels or node_b in node_labels:
-            if continuity == 2:
-                if node_a in node_labels:
-                    node_labels[node_b] = node_labels[node_a]
-                    node_groups[node_labels[node_b]].append(node_b)
-                    grouped_graph.node[node_labels[node_b]]["shapes"].append(node_b)
-                else:
-                    node_labels[node_a] = node_labels[node_b]
-                    node_groups[node_labels[node_a]].append(node_a)
-                    grouped_graph.node[node_labels[node_a]]["shapes"].append(node_a)
-                continue
+def cluster_directions(normals, n_clusters=4, tolerance_deg=2.0):
+    """Group near-identical direction vectors; KMeans replacement.
 
-        if node_a not in node_labels:
-            node_labels[node_a] = node_a
-            node_groups[node_a] = [node_a]
-            grouped_graph.add_node(node_a, shapes=[node_a])
+    sklearn's KMeans crashes under pythonocc 7.9 on Windows (threadpoolctl
+    fails introspecting OCCT's OpenMP runtime, WinError 0xc06d007f), and was
+    overkill anyway: rectangular-tube face normals form exact clusters. Raises
+    if the normals do not form exactly n_clusters groups, mirroring the old
+    'Could not fit a rectangular section' failure mode.
+    """
+    cos_tol = math.cos(math.radians(tolerance_deg))
+    centers = []   # list of [sum_x, sum_y, sum_z, count]
+    labels = []
+    for nx_, ny_, nz_ in normals:
+        for index, center in enumerate(centers):
+            cx, cy, cz, count = center
+            norm = math.sqrt(cx * cx + cy * cy + cz * cz) or 1.0
+            if (nx_ * cx + ny_ * cy + nz_ * cz) / norm >= cos_tol:
+                center[0] += nx_
+                center[1] += ny_
+                center[2] += nz_
+                center[3] += 1
+                labels.append(index)
+                break
+        else:
+            centers.append([nx_, ny_, nz_, 1])
+            labels.append(len(centers) - 1)
 
-        if node_b not in node_labels:
-            node_labels[node_b] = node_b
-            node_groups[node_b] = [node_b]
-            grouped_graph.add_node(node_b, shapes=[node_b])
+    if len(centers) != n_clusters:
+        raise Exception("Expected %d normal directions, found %d" % (n_clusters, len(centers)))
 
-        grouped_graph.add_edge(node_labels[node_a], node_labels[node_b])
-
-    return grouped_graph, component
-
+    directions = [[c[0] / c[3], c[1] / c[3], c[2] / c[3]] for c in centers]
+    return labels, directions
 
 
 def get_rectangular_parameters(aag, graph, x_axis=None):
@@ -102,8 +121,8 @@ def get_rectangular_parameters(aag, graph, x_axis=None):
     mid_points = []
     corner_radii = []
     for node_hash in graph.nodes():
-        for shape_hash in graph.node[node_hash]["shapes"]:
-            node = aag.C1_faces.node[shape_hash]
+        for shape_hash in graph.nodes[node_hash]["shapes"]:
+            node = aag.C1_faces.nodes[shape_hash]
 
             if node["convexity"] == FaceTypes.PLANAR:
                 face = node["shape"]
@@ -118,9 +137,7 @@ def get_rectangular_parameters(aag, graph, x_axis=None):
                 corner_radii.append(abs(0.5 / node["curvature"]))
 
     # Cluster directions
-    kmeans = KMeans(n_clusters=4)
-    labels = kmeans.fit_predict(normals)
-    directions = kmeans.cluster_centers_
+    labels, directions = cluster_directions(normals, n_clusters=4)
 
     # Normailze vectors
     vectors = []
@@ -171,15 +188,16 @@ def get_rectangular_parameters(aag, graph, x_axis=None):
     max_extrusion = float("-inf")
     z_axis = vectors[width_labels[0]].Crossed(vectors[height_labels[0]])
     for node_hash in graph.nodes():
-        for shape_hash in graph.node[node_hash]["shapes"]:
-            node = aag.C1_faces.node[shape_hash]
+        for shape_hash in graph.nodes[node_hash]["shapes"]:
+            node = aag.C1_faces.nodes[shape_hash]
             face = node["shape"]
+            # BRepAdaptor_HSurface was removed in OCCT 7.6; the parameter
+            # bounds live directly on the adaptor now
             adaptor = BRepAdaptor_Surface(face)
-            adaptor_handle = BRepAdaptor_HSurface(adaptor)
 
             points = []
-            points.append(adaptor.Value(adaptor_handle.FirstUParameter(), adaptor_handle.FirstVParameter()))
-            points.append(adaptor.Value(adaptor_handle.LastUParameter(), adaptor_handle.LastVParameter()))
+            points.append(adaptor.Value(adaptor.FirstUParameter(), adaptor.FirstVParameter()))
+            points.append(adaptor.Value(adaptor.LastUParameter(), adaptor.LastVParameter()))
 
 
             for point in points:
@@ -215,7 +233,7 @@ def analyse_shape(aag, display=None):
     aag.node_groups = {}
     # base_hash = sorted_areas.pop(0)[1]
     base_hash = sorted_areas[0][1]
-    base_node = aag.C1_faces.node[base_hash]
+    base_node = aag.C1_faces.nodes[base_hash]
 
     # Get graph growing from base
     graph_a, component_a = grouped_graph(aag, base_hash, node_labels=aag.node_labels, node_groups=aag.node_groups)
@@ -227,7 +245,7 @@ def analyse_shape(aag, display=None):
     for area, other_base_hash in sorted_areas[1:]:
 
         if other_base_hash not in aag.node_labels:
-            other_node = aag.C1_faces.node[other_base_hash]
+            other_node = aag.C1_faces.nodes[other_base_hash]
 
             if base_node["convexity"].value == -other_node["convexity"].value:
                 break
@@ -246,8 +264,8 @@ def analyse_shape(aag, display=None):
     if display:
         for node_hash in graph_a.nodes():
 
-            for shape_hash in graph_a.node[node_hash]["shapes"]:
-                node = aag.C1_faces.node[shape_hash]
+            for shape_hash in graph_a.nodes[node_hash]["shapes"]:
+                node = aag.C1_faces.nodes[shape_hash]
 
                 if node["convexity"] == FaceTypes.PLANAR:
                     display.DisplayShape(node["shape"], update=True, color="blue")
@@ -257,8 +275,8 @@ def analyse_shape(aag, display=None):
 
         for node_hash in graph_b.nodes():
 
-            for shape_hash in graph_b.node[node_hash]["shapes"]:
-                node = aag.C1_faces.node[shape_hash]
+            for shape_hash in graph_b.nodes[node_hash]["shapes"]:
+                node = aag.C1_faces.nodes[shape_hash]
 
                 if node["convexity"] == FaceTypes.PLANAR:
                     display.DisplayShape(node["shape"], update=True, color="black")
@@ -269,16 +287,16 @@ def analyse_shape(aag, display=None):
     # Define shape types
     if num_nodes_a == 1:
         for node_hash in graph_a.nodes():
-            for shape_hash in graph_a.node[node_hash]["shapes"]:
-                node = aag.C1_faces.node[shape_hash]
+            for shape_hash in graph_a.nodes[node_hash]["shapes"]:
+                node = aag.C1_faces.nodes[shape_hash]
                 break
 
         # Shape is a flat sheet
         if node["convexity"] == FaceTypes.PLANAR:
 
             for node_hash in graph_b.nodes():
-                for shape_hash in graph_b.node[node_hash]["shapes"]:
-                    node_b = aag.C1_faces.node[shape_hash]
+                for shape_hash in graph_b.nodes[node_hash]["shapes"]:
+                    node_b = aag.C1_faces.nodes[shape_hash]
                     break
 
             face_a = node["shape"]
@@ -305,8 +323,8 @@ def analyse_shape(aag, display=None):
 
             radii = []
             for node_hash in graph_a.nodes():
-                for shape_hash in graph_a.node[node_hash]["shapes"]:
-                    node = aag.C1_faces.node[shape_hash]
+                for shape_hash in graph_a.nodes[node_hash]["shapes"]:
+                    node = aag.C1_faces.nodes[shape_hash]
                     if node["curvature"]: #TODO: test of curvature is ever zero
                         radii.append(abs(0.5 / node["curvature"]))
 
@@ -314,8 +332,8 @@ def analyse_shape(aag, display=None):
 
             radii = []
             for node_hash in graph_b.nodes():
-                for shape_hash in graph_b.node[node_hash]["shapes"]:
-                    node = aag.C1_faces.node[shape_hash]
+                for shape_hash in graph_b.nodes[node_hash]["shapes"]:
+                    node = aag.C1_faces.nodes[shape_hash]
                     if node["curvature"]: #TODO: test of curvature is ever zero
                         radii.append(abs(0.5 / node["curvature"]))
 
@@ -330,11 +348,10 @@ def analyse_shape(aag, display=None):
             min_extrusion = float("inf")
             max_extrusion = float("-inf")
             for node_hash in graph_a.nodes():
-                for shape_hash in graph_a.node[node_hash]["shapes"]:
-                    node = aag.C1_faces.node[shape_hash]
+                for shape_hash in graph_a.nodes[node_hash]["shapes"]:
+                    node = aag.C1_faces.nodes[shape_hash]
                     face = node["shape"]
                     adaptor = BRepAdaptor_Surface(face)
-                    adaptor_handle = BRepAdaptor_HSurface(adaptor)
 
                     if not z_axis:
                         surface_handle = face_surface_handle(face)
@@ -343,8 +360,8 @@ def analyse_shape(aag, display=None):
                         z_axis = gp_Vec(v_direction.XYZ())
 
                     points = []
-                    points.append(adaptor.Value(adaptor_handle.FirstUParameter(), adaptor_handle.FirstVParameter()))
-                    points.append(adaptor.Value(adaptor_handle.LastUParameter(), adaptor_handle.LastVParameter()))
+                    points.append(adaptor.Value(adaptor.FirstUParameter(), adaptor.FirstVParameter()))
+                    points.append(adaptor.Value(adaptor.LastUParameter(), adaptor.LastVParameter()))
 
 
                     for point in points:

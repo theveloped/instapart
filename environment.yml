@@ -1,0 +1,19 @@
+name: instapart3
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pythonocc-core=7.9.0
+  - numpy
+  - scikit-learn
+  - networkx>=3.0
+  - pillow>=10
+  - lxml
+  - pyyaml
+  - pip
+  - pip:
+      - ezdxf~=1.4
+      - marshmallow>=3.20,<4
+      - pyclipper
+      - pytest
+      - jsonschema

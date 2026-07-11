@@ -45,7 +45,6 @@ import networkx as nx
 from enum import Enum
 
 
-# imports for pytinstaller
 from bounding_box import get_boundingbox_dimensions
 from schemas import JobSchema, TreeSchema, ShapeSchema, SectionSchema, TemplateSchema
 from cycad import Pattern, Entity
@@ -55,18 +54,11 @@ from auto    import main as auto_main
 from analyse import main as analyse_main
 from flatten import main as flatten_main
 from explode import main as explode_main
-from activate import main as activate_main, check_license, deactivate
-from observe import main as observe_main
 
-if os.name == 'nt':
-    from service import main as service_main
-
-from cryptlex.lexactivator import LexActivator, LexStatusCodes, PermissionFlags, LexActivatorException
-LexActivator.SetProductFile(resource_path("product_v38505766-362d-47bf-a0a1-02c677e7124c.dat"))
-LexActivator.SetProductId("38505766-362d-47bf-a0a1-02c677e7124c", PermissionFlags.LA_USER);
-
+from marshmallow import ValidationError
 
 import logging
+import logging.handlers
 logger = logging.getLogger()
 
 def configure_logger(level=logging.DEBUG):
@@ -190,18 +182,15 @@ def parse_template():
     early_parser.add_argument("--template", help="change default template location", default=resource_path("template.json"))
     args, remainder_argv = early_parser.parse_known_args()
 
-    template =None
+    template = None
     template_file = is_file(args.template, allowed_extensions=["json"], raise_exceptions=False)
     if template_file:
-        with open(template_file, 'r') as json_file:
-            template = TemplateSchema().loads(json_file.read())
-
-        if template.errors:
-            logger.warning("Failed to parse template: {}".format(template.errors))
-            template = None
-
-        else:
-            template = template.data
+        with open(template_file, 'r', encoding='utf-8') as json_file:
+            try:
+                template = TemplateSchema().loads(json_file.read())
+            except ValidationError as error:
+                logger.warning("Failed to parse template: {}".format(error.messages))
+                template = None
 
     return template
 
@@ -209,25 +198,8 @@ def parse_template():
 if __name__ == '__main__':
     import argparse
 
-    # Check if config file is present or call argparse help
-    if len(sys.argv) == 1 and os.name == 'nt':
-        service_main()
-        sys.exit()
-
     parser = argparse.ArgumentParser(prog='InstaPart')
     subparsers = parser.add_subparsers(help='desired command to initiate', dest='command')
-
-    # create the parser for the "auto" command
-    parser_activate = subparsers.add_parser('activate', help='activate your license')
-    parser_activate.add_argument("-k", "--key", help="license key", default="")
-    parser_activate.add_argument("-t", "--trail", help="trail license", action='store_true')
-    parser_activate.add_argument("-u", "--user_name", help="user name of license holder")
-    parser_activate.add_argument("-c", "--company_name", help="company name of license holder")
-    parser_activate.add_argument('-v', '--verbose', help="verbose logging", action="store_const", dest="loglevel", const=logging.INFO, default=logging.WARNING)
-
-    # create the parser for the "deactivate" command
-    parser_deactivate = subparsers.add_parser('deactivate', help='deactivate your license')
-    parser_deactivate.add_argument('-v', '--verbose', help="verbose logging", action="store_const", dest="loglevel", const=logging.INFO, default=logging.WARNING)
 
     # create the parser for the "auto" command
     parser_auto = subparsers.add_parser('auto', help='automatically analyse, explode and flatten input file')
@@ -302,69 +274,6 @@ if __name__ == '__main__':
     parser_flatten.add_argument("--relative_volume_threshold", help="Error threshold between the relative folded and unfolded shape", type=float, default=0.025)
     # parser_flatten.add_argument("-d", "--display", help="display user interface", action='store_true')
 
-    # create the parser for the "observe" command
-    parser_observe = subparsers.add_parser('observe', help='automatically watch filesystem for new files to process')
-    parser_observe.add_argument('directory', help="directory to observe for file changes", type=is_dir)
-    parser_observe.add_argument("-o", "--output", help="output directory", type=is_dir)
-    parser_observe.add_argument("-n", "--nested", help="nested output directory", action='store_true')
-    parser_observe.add_argument("-f", "--features", help="check parts for features (e.g. chamfers, embossings)", action='store_true')
-    parser_observe.add_argument("-k", "--k_factor", help="k-factor to use duiring unfolding", type=float, default=0.5)
-    parser_observe.add_argument("-m", "--material", help="material that will be used in export", type=str, default=None)
-    parser_observe.add_argument("-r", "--repair", help="allow repair if no valid solid is detected", action='store_true')
-    parser_observe.add_argument('-v', '--verbose', help="verbose logging", action="store_const", dest="loglevel", const=logging.INFO, default=logging.WARNING)
-    # parser_observe.add_argument("-d", "--display", help="display user interface", action='store_true')
-
-    # create the parser for the "service" command
-    if os.name == 'nt':
-        parser_service = subparsers.add_parser('service', help='automatically convert, analyse, explode and flatten input file')
-        parser_service.add_argument('input', type=str, nargs='*', help="windows service commands")
-        parser_service.add_argument('-v', '--verbose', help="verbose logging", action="store_const", dest="loglevel", const=logging.INFO, default=logging.WARNING)
-
-    # Fallback for Bysoft Batch Unfold Input file
-    if len(sys.argv) >= 2:
-        # print(sys.argv[1])
-
-        if sys.argv[1] not in ["activate", "auto", "analyse", "explode", "flatten", "observe", "service"]:
-            try:
-                batch_info_path = is_xml_file(sys.argv[1])
-            except:
-                batch_info_path = None
-
-            if len(sys.argv) == 2 and batch_info_path:
-                configure_logger(level=logging.WARNING)
-                logger.info("Using XML config file")
-
-                tree = ET.parse(batch_info_path)
-                root = tree.getroot()
-
-                input_files = []
-                output_dir = None
-                material = None
-                k_factor = 0.5
-
-                for child in root:
-                    if child.tag == "InputFiles":
-                        for input_file in child:
-                            input_file = is_step_file(input_file.text)
-                            input_files.append(input_file)
-
-                    elif child.tag == "OutputFolder":
-                        output_dir = child.text
-
-                    elif child.tag == "DefaultMaterial":
-                        material = child.text
-
-                    elif child.tag == "KFactor":
-                        k_factor = float(child.text)
-
-                if len(input_files) > 0 and output_dir and material and k_factor:
-                    check_license(meter_attribute="xml_command")
-
-                    for file_path in input_files:
-                        auto_main(file_path, output_dir, display=None, bysoft_autopart=True, align=True, k_factor=k_factor, repair=True, material=material, check_features=True)
-
-                sys.exit()
-
     args = parse_config_args(parser)
     configure_logger(level=args.loglevel)
 
@@ -391,22 +300,9 @@ if __name__ == '__main__':
 
 
     # handle auto of step files
-    if args.command == "activate":
-        logger.info("Starting: ACTIVATE")
-
-        activate_main(license_key=args.key, trail=args.trail, user_name=args.user_name, company_name=args.company_name)
-
-    # handle auto of step files
-    if args.command == "deactivate":
-        logger.info("Starting: DEACTIVATE")
-
-        deactivate()
-
-    # handle auto of step files
-    elif args.command == "auto":
+    if args.command == "auto":
         logger.info("Starting: AUTO")
 
-        check_license(meter_attribute="auto_command")
         export_names = {}
         for file_path in args.input:
 
@@ -468,7 +364,6 @@ if __name__ == '__main__':
     elif args.command == "analyse":
         logger.info("Starting: ANALYSING")
 
-        check_license(meter_attribute="analyse_command")
         for file_path in args.input:
 
             with get_display(args.display) as display:
@@ -481,7 +376,6 @@ if __name__ == '__main__':
     elif args.command == "explode":
         logger.info("Starting: EXPLODE")
 
-        check_license(meter_attribute="explode_command")
         export_names = {}
         for file_path in args.input:
 
@@ -517,7 +411,6 @@ if __name__ == '__main__':
     elif args.command == "flatten":
         logger.info("Starting: FLATTEN")
 
-        check_license(meter_attribute="flatten_command")
         for file_path in args.input:
 
             with get_display(args.display) as display:
@@ -539,19 +432,3 @@ if __name__ == '__main__':
                 flatten_main(file_path, output_dir, display=display, align=True, k_factor=args.k_factor, repair=args.repair, material=args.material, check_features=args.features,
                     absolute_volume_threshold=args.absolute_volume_threshold,
                     relative_volume_threshold=args.relative_volume_threshold)
-
-    # handle flattening of step files
-    elif args.command == "observe":
-        logger.info("Starting: OBSERVE")
-        check_license(meter_attribute="observe_command")
-
-        observe_main(args.directory)
-
-
-    # handle service install, update and remove
-    elif args.command == "service":
-        logger.info("Starting: SERVICE")
-        check_license(meter_attribute="service_command")
-
-        sys.argv.pop(1)
-        service_main()

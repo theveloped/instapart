@@ -2,23 +2,20 @@
 from __future__ import unicode_literals
 
 import sys
-if sys.version_info.major == 2:
-    import cStringIO as StringIO
-else:
-    import io as StringIO
+import io as StringIO
 
-from OCC.gp import gp_Ax2, gp_Pnt, gp_Dir
-from OCC.BRepLib import breplib
-from OCC.HLRBRep import HLRBRep_Algo, HLRBRep_HLRToShape
-from OCC.HLRAlgo import HLRAlgo_Projector
-from OCC.GCPnts import GCPnts_QuasiUniformDeflection
+from OCC.Core.gp import gp_Ax2, gp_Pnt, gp_Dir
+from OCC.Core.BRepLib import breplib
+from OCC.Core.HLRBRep import HLRBRep_Algo, HLRBRep_HLRToShape
+from OCC.Core.HLRAlgo import HLRAlgo_Projector
+from OCC.Core.GCPnts import GCPnts_QuasiUniformDeflection
 
-from OCC.Bnd import Bnd_Box
-from OCC.BRepBndLib import brepbndlib_Add
-from OCC.TopAbs import TopAbs_SOLID, TopAbs_EDGE, TopAbs_FACE, TopAbs_WIRE
-from OCC.TopExp import TopExp_Explorer
-from OCC.TopoDS import topods_Edge
-from OCC.BRepAdaptor import BRepAdaptor_Curve
+from OCC.Core.Bnd import Bnd_Box
+from OCC.Core.BRepBndLib import brepbndlib
+from OCC.Core.TopAbs import TopAbs_SOLID, TopAbs_EDGE, TopAbs_FACE, TopAbs_WIRE
+from OCC.Core.TopExp import TopExp_Explorer
+from OCC.Core.TopoDS import topods
+from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
 
 
 try:
@@ -58,7 +55,7 @@ def getPNG(shape, opts=None):
     hlr.Update()
     hlr.Hide()
 
-    hlr_shapes = HLRBRep_HLRToShape(hlr.GetHandle())
+    hlr_shapes = HLRBRep_HLRToShape(hlr)
 
     visible = []
 
@@ -94,10 +91,10 @@ def getPNG(shape, opts=None):
     # get bounding box -- these are all in 2-d space
     bb = Bnd_Box()
     for path in visible:
-        brepbndlib_Add(path, bb)
+        brepbndlib.Add(path, bb)
 
     for path in hidden:
-        brepbndlib_Add(path, bb)
+        brepbndlib.Add(path, bb)
 
     xmin, ymin, zmin, xmax, ymax, zmax = bb.Get()
     bb_width = xmax - xmin
@@ -232,7 +229,7 @@ def getEdges(shape):
     edges = []
     edge_explorer = TopExp_Explorer(shape, TopAbs_EDGE)
     while edge_explorer.More():
-        current_edge = topods_Edge(edge_explorer.Current())
+        current_edge = topods.Edge(edge_explorer.Current())
         yield current_edge
         edge_explorer.Next()
 
@@ -262,7 +259,7 @@ def getSVG(shape, opts=None):
     hlr.Update()
     hlr.Hide()
 
-    hlr_shapes = HLRBRep_HLRToShape(hlr.GetHandle())
+    hlr_shapes = HLRBRep_HLRToShape(hlr)
 
     visible = []
 
@@ -301,10 +298,10 @@ def getSVG(shape, opts=None):
     # get bounding box -- these are all in 2-d space
     bb = Bnd_Box()
     for path in visible:
-        brepbndlib_Add(path, bb)
+        brepbndlib.Add(path, bb)
 
     for path in hidden:
-        brepbndlib_Add(path, bb)
+        brepbndlib.Add(path, bb)
 
     xmin, ymin, zmin, xmax, ymax, zmax = bb.Get()
     bb_width = xmax - xmin
@@ -353,7 +350,7 @@ def exportSVG(shape, fileName):
     """
 
     svg = getSVG(shape)
-    f = open(fileName, 'w')
+    f = open(fileName, 'w', encoding='utf-8')
     f.write(svg)
     f.close()
 
@@ -366,7 +363,7 @@ def exportPNG(shape, fileName):
     """
 
     img = getPNG(shape)
-    img = img.transpose(Image.FLIP_TOP_BOTTOM)
+    img = img.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
     img.save(fileName, "png", optimize=True, quality=70)
 
 

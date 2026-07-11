@@ -10,7 +10,7 @@
         "filename_postfix": null,
         "filename_postfix": null,
         "k_factor": 0.5,
-        "export": ["PDF", "STP", "XLS"],
+        "export": ["STP"],
         "absolute_volume_threshold": 5.0,
         "relative_volume_threshold": 0.025,
 

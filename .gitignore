@@ -138,3 +138,6 @@ Bystronic.Bysoft.BatchUnfold.exe
 examples/assy/ach-con_OCC_20200820.stp
 examples/assy/exported.stp
 examples/assy/P1R1.00 COLOMBIA.stp
+
+# Benchmark harness run output (history.csv/baseline.json ARE committed)
+benchmarks/runs/

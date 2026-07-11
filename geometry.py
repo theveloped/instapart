@@ -93,8 +93,10 @@ class Point(object):
   __rmul__ = __mul__
 
   # allow devision of points by scalar
-  def __div__(self, scalar):
+  def __truediv__(self, scalar):
     return Point(self.x / scalar, self.y / scalar)
+
+  __div__ = __truediv__
 
   # mirrors point with regard to origin
   def __neg__(self):
@@ -780,65 +782,66 @@ def main():
   ###############################################
   ## Tests Point Class ##########################
   ###############################################
-  print "[+] Testing Point Class"
+  print("[+] Testing Point Class")
 
   p1 = Point([1, 2])
-  print " | init:", p1
-  print " | index:", p1[-1], p1[0], p1[1], p1[2]
+  print(" | init:", p1)
+  print(" | index:", p1[-1], p1[0], p1[1], p1[2])
 
   string = " | iter:"
   for coord in p1:
     string += " " + str(coord)
-  print string
+  print(string)
 
-  print " | add:", p1 + p1, p1 + [1, 2], p1 + (1, 2)
-  print " | sub:", p1 - p1, p1 - [1, 2], p1 - (1, 2)
-  print " | neg:", -p1
-  print " | distance", p1.distance()
-  print " | determinant", p1.determinant(p1), p1.determinant(p1 + (0, 1), normalized=True), p1.determinant(p1 + (0, -1), normalized=True)
-  print " | orientation", p1.isRightOf((0, 1)), p1.isLeftOf((0, -1))
+  print(" | add:", p1 + p1, p1 + [1, 2], p1 + (1, 2))
+  print(" | sub:", p1 - p1, p1 - [1, 2], p1 - (1, 2))
+  print(" | neg:", -p1)
+  print(" | div:", p1 / 2.0)
+  print(" | distance", p1.distance())
+  print(" | determinant", p1.determinant(p1), p1.determinant(p1 + (0, 1), normalized=True), p1.determinant(p1 + (0, -1), normalized=True))
+  print(" | orientation", p1.isRightOf((0, 1)), p1.isLeftOf((0, -1)))
 
 
   ###############################################
   ## Tests Path Class ###########################
   ###############################################
-  print "\n[+] Testing Path Class"
+  print("\n[+] Testing Path Class")
   contour1 = [[0., 0.], [10., 0.], [10., 10.]]
   path1 = Path(contour1)
 
-  print " | init:", path1
-  print " | index:", path1[-1], path1[0], path1[1], path1[2]
+  print(" | init:", path1)
+  print(" | index:", path1[-1], path1[0], path1[1], path1[2])
 
   string = " | iter:"
   for point in path1:
     string += " " + str(point)
-  print string
+  print(string)
 
   path1.append([0., 10.])
-  print " | append:", path1
-  print " | contains:", path1.contains(Point(-15., 5.)), path1.contains(Point(5., 5.))
+  print(" | append:", path1)
+  print(" | contains:", path1.contains(Point(-15., 5.)), path1.contains(Point(5., 5.)))
 
   path1.translate(1., 2.)
-  print " | translate:", path1
+  print(" | translate:", path1)
 
   path1.reverse()
-  print " | reverse:", path1
-  print " | area:", path1.area()
-  print " | isCCW:", path1.isCCW()
+  print(" | reverse:", path1)
+  print(" | area:", path1.area())
+  print(" | isCCW:", path1.isCCW())
 
   path1.CCW()
-  print " | CCW:", path1
+  print(" | CCW:", path1)
 
   centroid = path1.centroid()
-  print " | centroid:", centroid
-  print " | bottom left:", path1.bottomLeftIndex()
-  print " | top right:", path1.topRightIndex()
-  print " | determinants:", path1.determinants(centroid)
-  print " | intersection segment:", path1.intersectSegment(Point(0., 3.), Point(3., 1.))
+  print(" | centroid:", centroid)
+  print(" | bottom left:", path1.bottomLeftIndex())
+  print(" | top right:", path1.topRightIndex())
+  print(" | determinants:", path1.determinants(centroid))
+  print(" | intersection segment:", path1.intersectSegment(Point(0., 3.), Point(3., 1.)))
 
   contour2 = [[0., 5.], [5., 5.], [5., 0.], [0., 0.]]
   path2 = Path(contour2)
-  print " | intersection paths:", path1.intersectPaths(path2)
+  print(" | intersection paths:", path1.intersectPaths(path2))
 
 
 
