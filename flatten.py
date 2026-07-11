@@ -30,8 +30,6 @@ from OCC.Core.BRep import BRep_Tool
 from OCC.Core.GeomAbs import GeomAbs_G1
 from OCC.Core.IFSelect import IFSelect_ItemsByEntity
 
-from OCC.Core.Bnd import Bnd_Box
-from OCC.Core.BRepBndLib import brepbndlib
 from OCC.Core.BRepBuilderAPI import (BRepBuilderAPI_Transform,
                                 BRepBuilderAPI_GTransform,
                                 BRepBuilderAPI_MakeEdge,
@@ -81,7 +79,7 @@ from models import Loop, Shape, Feature
 from bounding_box import get_boundingbox_dimensions
 
 # utils
-from utils import import_step, get_area, get_volume, get_shape_solids, redirect_stdout, suppress_stdout_stderr, shape_hash
+from utils import import_step, get_area, get_volume, get_shape_solids, redirect_stdout, suppress_stdout_stderr, shape_hash, largest_wire_index
 
 import logging
 logger = logging.getLogger()
@@ -2678,17 +2676,7 @@ def main(
             return False
 
         # Analyse result
-        max_size = 0
-        max_index = 0
-        bbox = Bnd_Box()
-        for i in range(len(loops)):
-            brepbndlib.Add(loops[i].wires[0], bbox)
-            bb_xmin, bb_ymin, _, bb_xmax, bb_ymax, _ = bbox.Get()
-            wire_size = (bb_xmax - bb_xmin) * (bb_ymax - bb_ymin)
-
-            if wire_size > max_size:
-                max_size = wire_size
-                max_index = i
+        max_index, _ = largest_wire_index([loop.wires[0] for loop in loops])
 
         # Generate single unfolded face based on wires
         # max_loop = loops.pop(max_index)

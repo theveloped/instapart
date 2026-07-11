@@ -27,6 +27,8 @@ from OCC.Core.TopAbs import (TopAbs_VERTEX, TopAbs_EDGE, TopAbs_FACE, TopAbs_WIR
                              TopAbs_SHELL, TopAbs_SOLID, TopAbs_COMPOUND, TopAbs_COMPSOLID)
 from OCC.Core.GProp import GProp_GProps
 from OCC.Core.BRepGProp import brepgprop
+from OCC.Core.Bnd import Bnd_Box
+from OCC.Core.BRepBndLib import brepbndlib
 
 from OCC.Core.TopoDS import TopoDS_Compound
 from OCC.Core.BRep import BRep_Builder
@@ -177,6 +179,30 @@ def get_volume(shape, TOLLERANCE=1e-5):
     except Exception:
         logger.warning("Volume computation failed, returning 0", exc_info=True)
         return 0
+
+
+def largest_wire_index(wires):
+    """
+    Index of the wire with the largest XY bounding-box area, plus the box
+    accumulated over all wires (the overall pattern bounds)
+    """
+    total = Bnd_Box()
+    max_size = 0
+    max_index = 0
+
+    for i, wire in enumerate(wires):
+        box = Bnd_Box()
+        brepbndlib.Add(wire, box)
+        brepbndlib.Add(wire, total)
+
+        xmin, ymin, _, xmax, ymax, _ = box.Get()
+        size = (xmax - xmin) * (ymax - ymin)
+
+        if size > max_size:
+            max_size = size
+            max_index = i
+
+    return max_index, total
 
 
 def import_step(step_path):

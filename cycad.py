@@ -20,8 +20,6 @@ from OCC.Core.GeomProjLib import geomprojlib
 from OCC.Core.BRep import BRep_Tool
 from OCC.Core.IFSelect import IFSelect_ItemsByEntity
 
-from OCC.Core.Bnd import Bnd_Box
-from OCC.Core.BRepBndLib import brepbndlib
 from OCC.Core.BRepBuilderAPI import (
     BRepBuilderAPI_Transform,
     BRepBuilderAPI_GTransform,
@@ -99,6 +97,7 @@ from ezdxf.enums import TextEntityAlignment
 from models import Colors, Feature
 from geometry import Point, Path, almostEqual, almostZero
 from label import main as label_main
+from utils import largest_wire_index
 
 TOLLERANCE = 1e-6
 
@@ -400,23 +399,9 @@ class Pattern(object):
         self.bends.append(bend)
 
     def contour_index(self):
-        max_size = 0
-        max_index = 0
-        bbox = Bnd_Box()
-
-        # for i in range(len(self.wires)-1, -1, -1):
-        for i in range(len(self.loops)):
-            brepbndlib.Add(self.loops[i].wires[0], bbox)
-
-            bb_xmin, bb_ymin, _, bb_xmax, bb_ymax, _ = bbox.Get()
-            wire_size = (bb_xmax - bb_xmin) * (bb_ymax - bb_ymin)
-
-            if wire_size > max_size:
-                max_size = wire_size
-                max_index = i
-
-            # logger.debug("WIRE %s IS: %s" % (i, wire_size))
-            # logger.debug("WIRE TYPE %s" % (self.wires[i].ShapeType()))
+        # per-wire boxes select the outer contour; the accumulated box keeps
+        # the overall pattern bounds for origin/width/height
+        max_index, bbox = largest_wire_index([loop.wires[0] for loop in self.loops])
 
         xmin, ymin, zmin, xmax, ymax, zmax = bbox.Get()
 

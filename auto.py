@@ -24,7 +24,7 @@ from enum import Enum
 # from sklearn.cluster import KMeans
 
 # utils
-from utils import import_step, mean, get_shape_solids, get_volume, get_area, update_shape_parts, iterate_shape_parts, part_compound_shape, redirect_stdout, suppress_stdout_stderr, NullTimer
+from utils import import_step, mean, get_shape_solids, get_volume, get_area, update_shape_parts, iterate_shape_parts, part_compound_shape, redirect_stdout, suppress_stdout_stderr, NullTimer, largest_wire_index
 from flatten import FaceTypes, face_normal, mid_point, face_surface_handle, FaceProperties, get_solid_from_shape, get_largest_solid, referse_feature
 
 # pythonOCC imports
@@ -34,8 +34,6 @@ from OCC.Core.BRepAdaptor import BRepAdaptor_Surface
 from OCC.Core.TopoDS import TopoDS_Compound
 from OCC.Core.BRep import BRep_Builder
 
-from OCC.Core.Bnd import Bnd_Box
-from OCC.Core.BRepBndLib import brepbndlib
 from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_MakeFace
 
 from OCC.Core.gp import gp_Trsf, gp_Vec
@@ -401,18 +399,10 @@ def main(file_path, output_dir,
                 # part is a bent or flat part
                 if open_wire_count == 0:
 
-                    # Analyse result
-                    max_size = 0
-                    max_index = 0
-                    bbox = Bnd_Box()
-                    for i in range(len(loops)):
-                        brepbndlib.Add(loops[i].wires[0], bbox)
-                        bb_xmin, bb_ymin, _, bb_xmax, bb_ymax, _ = bbox.Get()
-                        wire_size = (bb_xmax - bb_xmin) * (bb_ymax - bb_ymin)
-
-                        if wire_size > max_size:
-                            max_size = wire_size
-                            max_index = i
+                    # Analyse result; the accumulated box is the overall
+                    # pattern bounds used for pattern origin/width/height below
+                    max_index, total_bbox = largest_wire_index([loop.wires[0] for loop in loops])
+                    bb_xmin, bb_ymin, _, bb_xmax, bb_ymax, _ = total_bbox.Get()
 
                     # Generate single unfolded face based on wires
                     # max_loop = loops.pop(max_index)
