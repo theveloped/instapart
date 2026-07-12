@@ -673,6 +673,7 @@ class AdjacencyGraph(object):
         """
         self.areas = []
         edge_edges = []
+        face_order = 0
         solid_explorer = TopExp_Explorer(self.shape, TopAbs_FACE)
         while solid_explorer.More():
             face = topods.Face(solid_explorer.Current())
@@ -683,9 +684,12 @@ class AdjacencyGraph(object):
             face_area = abs(get_area(face))
             self.areas.append((face_area, face_hash))
 
-            # add face + attributes to graph
+            # add face + attributes to graph; `order` is the deterministic
+            # explorer traversal index, the canonical sort key wherever face
+            # hashes (address-derived) pass through sets
             convexity, curvature, radii, directions = face_convexity(face)
-            graph_faces.add_node(face_hash, shape=face, convexity=convexity, curvature=curvature, radii=radii, directions=directions, bend_radius=None, k_factor=None)
+            graph_faces.add_node(face_hash, shape=face, convexity=convexity, curvature=curvature, radii=radii, directions=directions, bend_radius=None, k_factor=None, order=face_order)
+            face_order += 1
             face_node = graph_faces.nodes[face_hash]
 
             # Loop over all edges of current face
@@ -1614,7 +1618,10 @@ class AdjacencyGraph(object):
 
                         sub_bends = []
                         total_angle = 0.0
-                        for node_hash in component:
+                        # component is a set of address-derived hashes; sort
+                        # by traversal order so the weighted start/end points
+                        # are reproducible across runs
+                        for node_hash in sorted(component, key=lambda h: self.C2_faces.nodes[h]["order"]):
 
                             node = graph.nodes[node_hash]
                             used_edge_hashes.add(node_hash)
@@ -1651,9 +1658,20 @@ class AdjacencyGraph(object):
                         bends.append(bend)
                         continue
 
+                else:
+                    # single uncombined bend: neighbors would otherwise be
+                    # stale from a previous iteration (or unbound)
+                    neighbors = frozenset(self.C1_faces.neighbors(node_hash)) if node_hash in self.C1_faces else frozenset()
+
                 bend = self.extract_bend(node, node_hash, surface_handle, thickness, transformations=transformations, reversed=reversed, display=display, k_factor=k_factor)
                 bend.neighbors = neighbors
                 bends.append(bend)
+
+        # canonical bend order: quantized geometry, not discovery order, so
+        # the serialized bend list and the group numbering below are stable
+        # across runs and platforms
+        bends.sort(key=lambda b: (round(b.angle or 0.0, 6), round(b.length or 0.0, 6),
+                                  tuple(round(c, 3) for point in b.path for c in point)))
 
         common_id = 1
         common_bends = {}
@@ -1712,7 +1730,9 @@ class AdjacencyGraph(object):
         second_hash = None
 
         used_hashes = set()
-        sorted_areas = sorted(self.areas, key=lambda x: x[0], reverse=True)
+        # quantized area + traversal-order tie-break: float noise between two
+        # near-equal large faces must not flip the base face (unfold side)
+        sorted_areas = sorted(self.areas, key=lambda x: (-round(x[0], 6), self.C1_faces.nodes[x[1]]["order"]))
 
         # First side (largest face)
         first_area, first_hash = sorted_areas[0]

@@ -451,10 +451,25 @@ class Pattern(object):
 
                 self.holes.append(entity)
 
+        # canonical hole order (largest first, geometry tie-breaks) so DXF
+        # and JSON output do not depend on wire discovery order
+        self.holes.sort(key=self._hole_sort_key)
+
         # TODO: Check orientations of wires for bulges
         # if wire.Orientation() != 0:
         #         wire.Reverse()
         pass
+
+    @staticmethod
+    def _hole_sort_key(entity):
+        try:
+            area = entity.compute_area()
+            length = entity.compute_length()
+        except Exception:
+            area, length = 0.0, 0.0
+        first_point = entity.path[0] if len(entity.path) else [0.0, 0.0]
+        return (-round(area, 6), round(length, 6),
+                round(first_point[0], 3), round(first_point[1], 3))
 
     def parse_loops(self):
         # contour_index = self.contour_index()
