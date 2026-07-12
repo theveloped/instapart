@@ -478,7 +478,8 @@ class Pattern(object):
         except Exception:
             area, length = 0.0, 0.0
         first_point = entity.path[0] if len(entity.path) else [0.0, 0.0]
-        return (-round(area, 6), round(length, 6),
+        # coarse buckets: cross-run float noise must stay inside one bucket
+        return (-round(area, 2), round(length, 3),
                 round(first_point[0], 3), round(first_point[1], 3))
 
     @staticmethod

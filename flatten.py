@@ -903,8 +903,10 @@ class AdjacencyGraph(object):
         open_wire_count = 0
         used_edge_hashes = set()
 
-        # Loop over all nodes (faces) in the graph
-        for node_hash in graph.nodes():
+        # Loop over all nodes (faces) in the graph. Sorted: subgraph views
+        # iterate their (address-hash) node set when it is smaller than half
+        # the parent graph, which is process-random order.
+        for node_hash in sorted(graph.nodes(), key=lambda h: graph.nodes[h]["order"]):
                 node = graph.nodes[node_hash]
                 node_scale = self.node_scale(node, thickness, k_factor=k_factor)
 
@@ -1319,10 +1321,9 @@ class AdjacencyGraph(object):
         node_transformations = {}
         node_flattened = {}
 
-        # Use random hash if none is given
+        # Use the first face in traversal order if none is given
         if not base_hash:
-            for base_hash in graph.nodes():
-                break
+            base_hash = min(graph.nodes(), key=lambda h: graph.nodes[h]["order"])
 
         if not align:
             # Compute surface to unfold other faces to
@@ -1353,8 +1354,11 @@ class AdjacencyGraph(object):
         if display:
             self.plot_transformed_face(base_node["shape"], base_surface_handle, transformations=node_transformations[base_hash], color="red")
 
-        # Loop over all adjacent faces until all are covered
-        for successors in nx.bfs_successors(graph, source=base_hash):
+        # Loop over all adjacent faces until all are covered. Neighbor order
+        # decides each face's unfold parent, and subgraph-view adjacency can
+        # iterate in address-hash set order — sort for a reproducible tree.
+        for successors in nx.bfs_successors(graph, source=base_hash,
+                                            sort_neighbors=lambda nodes: sorted(nodes, key=lambda h: graph.nodes[h]["order"])):
 
             predecessor_hash = successors[0]
             for successor_hash in successors[1]:
@@ -1610,8 +1614,9 @@ class AdjacencyGraph(object):
         bends = []
         used_edge_hashes = set()
 
-        # Loop over all nodes (faces) in the graph
-        for node_hash in graph.nodes():
+        # Loop over all nodes (faces) in the graph, in traversal order
+        # (subgraph views can iterate in address-hash set order)
+        for node_hash in sorted(graph.nodes(), key=lambda h: graph.nodes[h]["order"]):
 
             if node_hash in used_edge_hashes:
                 continue
@@ -1698,7 +1703,7 @@ class AdjacencyGraph(object):
         # canonical bend order: quantized geometry, not discovery order, so
         # the serialized bend list and the group numbering below are stable
         # across runs and platforms
-        bends.sort(key=lambda b: (round(b.angle or 0.0, 6), round(b.length or 0.0, 6),
+        bends.sort(key=lambda b: (round(b.angle or 0.0, 6), round(b.length or 0.0, 3),
                                   tuple(round(c, 3) for point in b.path for c in point)))
 
         common_id = 1
@@ -1734,8 +1739,8 @@ class AdjacencyGraph(object):
         bends = []
         used_edge_hashes = set()
 
-        # Loop over all nodes (faces) in the graph
-        for node_hash in graph.nodes():
+        # Loop over all nodes (faces) in the graph, in traversal order
+        for node_hash in sorted(graph.nodes(), key=lambda h: graph.nodes[h]["order"]):
             node = graph.nodes[node_hash]
 
             # Loop over all edges, with internal wires grouped
@@ -1759,8 +1764,10 @@ class AdjacencyGraph(object):
 
         used_hashes = set()
         # quantized area + traversal-order tie-break: float noise between two
-        # near-equal large faces must not flip the base face (unfold side)
-        sorted_areas = sorted(self.areas, key=lambda x: (-round(x[0], 6), self.C1_faces.nodes[x[1]]["order"]))
+        # near-equal large faces must not flip the base face (unfold side).
+        # 0.01 mm2 buckets: observed cross-run area noise is ~1e-5 mm2 on
+        # large faces, so anything finer leaves the sort key itself noisy
+        sorted_areas = sorted(self.areas, key=lambda x: (-round(x[0], 2), self.C1_faces.nodes[x[1]]["order"]))
 
         # First side (largest face)
         first_area, first_hash = sorted_areas[0]

@@ -238,7 +238,8 @@ def analyse_shape(aag, display=None):
     section_data = Section()
     # quantized area + traversal-order tie-break: float noise between two
     # near-equal large faces must not flip the base-face choice across runs
-    sorted_areas = sorted(aag.areas, key=lambda x: (-round(x[0], 6), aag.C1_faces.nodes[x[1]]["order"]))
+    # (0.01 mm2 buckets; cross-run area noise is ~1e-5 mm2 on large faces)
+    sorted_areas = sorted(aag.areas, key=lambda x: (-round(x[0], 2), aag.C1_faces.nodes[x[1]]["order"]))
     aag.node_labels = {}
     aag.node_groups = {}
     # base_hash = sorted_areas.pop(0)[1]
