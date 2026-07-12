@@ -128,6 +128,9 @@ class Shape(object):
     def __init__(self, shape_type=None):
         self.type = shape_type or Shape.ShapeTypes.OTHER
 
+        # content-derived persistent id (identity.solid_content_id)
+        self.id = None
+
         self.area = None
         self.volume = None
 

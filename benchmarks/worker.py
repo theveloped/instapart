@@ -40,6 +40,7 @@ def summarize_job(job):
     thicknesses = []
     bend_count = 0
     bend_angles = []
+    shape_ids = []
 
     def walk(node):
         nonlocal parts, sheets, tubes, failed, bend_count
@@ -49,6 +50,8 @@ def summarize_job(job):
         if shapes:
             parts += 1
         for shape in shapes:
+            if shape.get("id") is not None:
+                shape_ids.append(shape["id"])
             kind = shape.get("type")
             if kind == "SHEET":
                 sheets += 1
@@ -72,6 +75,7 @@ def summarize_job(job):
         "sheets": sheets,
         "tubes": tubes,
         "failed_shapes": failed,
+        "shape_ids": sorted(shape_ids),
         "message_codes": sorted(metrics.message_codes(job)),
         "metrics": {
             "thickness": thicknesses[0] if thicknesses else None,

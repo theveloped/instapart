@@ -93,7 +93,7 @@ def run_one(entry, run_dir, jobs_env, timeout_scale=1.0, k_factor=0.5, features=
         return record, None
 
     record["timings"] = worker_result.get("timings") or {}
-    for key in ("parts_found", "sheets", "tubes", "failed_shapes", "message_codes", "metrics"):
+    for key in ("parts_found", "sheets", "tubes", "failed_shapes", "shape_ids", "message_codes", "metrics"):
         if key in worker_result:
             record[key] = worker_result[key]
     if worker_result.get("error"):

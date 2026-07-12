@@ -98,6 +98,7 @@ from models import Colors, Feature
 from geometry import Point, Path, almostEqual, almostZero
 from label import main as label_main
 from utils import largest_wire_index
+import identity
 
 TOLLERANCE = 1e-6
 
@@ -167,6 +168,8 @@ class Entity(object):
         COUNTERSINK = 4
 
     def __init__(self, path=None, type=None, radius=None, centroid=None, inner_radius=None, k_factor=None, angle=None, length=None, TOLLERANCE=TOLLERANCE):
+        # content-derived persistent id (assigned by parse_wires/extract_bends)
+        self.id = None
         self.path = path
         if not path:
             self.path = Path()
@@ -455,6 +458,13 @@ class Pattern(object):
         # and JSON output do not depend on wire discovery order
         self.holes.sort(key=self._hole_sort_key)
 
+        # persistent ids: rigid-motion-invariant signature (area, perimeter,
+        # distance to the contour centroid — the proven golden-metrics recipe)
+        contour_centroid = self._entity_centroid(self.contour)
+        self.contour.id = self._entity_content_id(self.contour, contour_centroid)
+        for hole in self.holes:
+            hole.id = self._entity_content_id(hole, contour_centroid)
+
         # TODO: Check orientations of wires for bulges
         # if wire.Orientation() != 0:
         #         wire.Reverse()
@@ -470,6 +480,34 @@ class Pattern(object):
         first_point = entity.path[0] if len(entity.path) else [0.0, 0.0]
         return (-round(area, 6), round(length, 6),
                 round(first_point[0], 3), round(first_point[1], 3))
+
+    @staticmethod
+    def _entity_centroid(entity):
+        if entity.centroid is not None:
+            return (entity.centroid[0], entity.centroid[1])
+        try:
+            point = entity.path.centroid()
+            return (point.x, point.y)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _entity_content_id(entity, contour_centroid):
+        try:
+            area = entity.compute_area()
+            length = entity.compute_length()
+            centroid = Pattern._entity_centroid(entity)
+            if centroid is None or contour_centroid is None:
+                distance = None
+            else:
+                distance = math.sqrt((centroid[0] - contour_centroid[0]) ** 2
+                                     + (centroid[1] - contour_centroid[1]) ** 2)
+            return identity.stable_digest(
+                identity.quantize(area, 1e-3),
+                identity.quantize(length, 1e-3),
+                identity.quantize(distance, 1e-3))
+        except Exception:
+            return None
 
     def parse_loops(self):
         # contour_index = self.contour_index()

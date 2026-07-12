@@ -54,6 +54,7 @@ from images import exportSVG, exportPNG
 # pipeline; it is imported lazily inside the export_pdf/export_xls branches.
 
 from naming import generate_name
+import identity
 
 import logging
 logger = logging.getLogger()
@@ -249,6 +250,7 @@ def main(file_path, output_dir,
                 logger.warning("Could not compute shape topology")
 
                 shape_data = Shape()
+                shape_data.id = identity.solid_content_id(solid)
                 message = {
                     "code": "001",
                     "description": "Could not compute shape topology",
@@ -263,6 +265,7 @@ def main(file_path, output_dir,
             try:
                 # Tube parts
                 shape_data = Shape()
+                shape_data.id = identity.solid_content_id(solid)
                 with timings.stage("classify"):
                     section_data = analyse_shape(aag, display=None)
 

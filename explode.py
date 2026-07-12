@@ -22,11 +22,10 @@ from OCC.Core.STEPControl import STEPControl_AsIs
 from OCC.Core.TopoDS import TopoDS_Compound
 from OCC.Core.BRep import BRep_Builder
 
-import uuid
-
 # utils
 from utils import get_rondom_color, iterate_shape_parts, part_compound_shape, get_shape_solids, redirect_stdout, suppress_stdout_stderr, sanitize_filename, shape_hash
 from naming import generate_name
+import identity
 
 import logging
 logger = logging.getLogger()
@@ -49,10 +48,8 @@ class Part(object):
 
         self.solids = solids if solids is not None else []
         self.messages = messages if messages is not None else []
-
-        if not id:
-            # uuid similar to NDB datastore
-            self.id = uuid.uuid4().int >> 75
+        # id stays None until a content-derived id is assigned (identity.py);
+        # previously a random uuid4-derived int per run
 
     def __dict__(self):
         json_components = []
@@ -71,6 +68,14 @@ class Part(object):
         return json.dumps(data, sort_keys=True, indent=2, separators=(',', ': '))
 
 
+def _assembly_content_id(components):
+    """Digest of the children's content ids and counts; None if no child has one."""
+    child_ids = sorted((c.id or 0, c.count or 0) for c in components or [] if c)
+    if not any(child_id for child_id, _ in child_ids):
+        return None
+    return identity.stable_digest(tuple(child_ids))
+
+
 class TreeBuilder(object):
     """ A class for analyzing the assembly structure of a STEP file"""
 
@@ -79,6 +84,7 @@ class TreeBuilder(object):
         self.part_names = set()
         self.part_index = 0
         self.references = {}
+        self.content_ids = {}
 
         # Create the document (handles are transparent since pythonocc 7.x;
         # no XCAFApp application needed for reading). Pass a plain str: the
@@ -146,6 +152,13 @@ class TreeBuilder(object):
         part.reference = self.references[reference_hash]
         part.shape = shape
 
+        # content-derived persistent id, computed once per prototype shape
+        # (duplicates share the untransformed TShape; the id is
+        # location-independent so the prototype stands for every instance)
+        if reference_hash not in self.content_ids:
+            self.content_ids[reference_hash] = identity.solid_content_id(shape)
+        part.id = self.content_ids[reference_hash]
+
         # Transformation paramaters of shape
         transformation = part.location.Transformation()
 
@@ -202,6 +215,7 @@ class TreeBuilder(object):
 
         if part.is_assembly:
             part.components = self.getComponents(part, ignore_duplicates=ignore_duplicates, display=display)
+            part.id = _assembly_content_id(part.components)
 
         elif part.is_simple:
             part.shapes = self.getShapes(part, display=display)
@@ -262,6 +276,7 @@ class TreeBuilder(object):
                 component = self.getPart(labels.Value(i), root=root, level=1, ignore_duplicates=ignore_duplicates, display=display)
                 components.append(component)
             self.tree.components = components
+            self.tree.id = _assembly_content_id(components)
 
         # Simply use standard label
         else:

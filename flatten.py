@@ -80,6 +80,7 @@ from bounding_box import get_boundingbox_dimensions
 
 # utils
 from utils import import_step, get_area, get_volume, get_shape_solids, redirect_stdout, suppress_stdout_stderr, shape_hash, largest_wire_index
+import identity
 
 import logging
 logger = logging.getLogger()
@@ -567,6 +568,7 @@ class AdjacencyGraph(object):
     def __init__(self, shape, TOLLERANCE=1e-6):
         self.shape = shape
         self.TOLLERANCE = TOLLERANCE
+        self._identity_frame_cache = None
 
         # Face graphs stored as networkX graphs
         # Graph nodes in the graph represent shape faces
@@ -587,6 +589,23 @@ class AdjacencyGraph(object):
 
     # Angular tolerance for geometric tangency detection (radians, ~0.57deg)
     SMOOTH_ANGLE_TOLERANCE = 1e-2
+
+    def _identity_frame(self):
+        """(solid centroid, characteristic scale) for content fingerprints."""
+        if self._identity_frame_cache is None:
+            volume = abs(get_volume(self.shape))
+            scale = max(volume ** (1.0 / 3.0), 1.0)
+            self._identity_frame_cache = (identity.solid_centroid(self.shape), scale)
+        return self._identity_frame_cache
+
+    def _face_content_fingerprint(self, node_hash):
+        """Fingerprint of one face for bend identity; None on failure."""
+        try:
+            centroid, scale = self._identity_frame()
+            face = self.C1_faces.nodes[node_hash]["shape"]
+            return identity.face_fingerprint(face, centroid, scale)
+        except Exception:
+            return None
 
     def edge_continuity(self, edge, node_a, node_b):
         """
@@ -1651,11 +1670,16 @@ class AdjacencyGraph(object):
 
                         bend_length = math.sqrt(math.pow(start_point[0] - end_point[0], 2) + math.pow(start_point[1] - end_point[1], 2))
 
-                        bend = Entity(type=Entity.EntityTypes.LINE, inner_radius=bend.inner_radius, k_factor=k_factor, angle=total_angle, length=bend_length)
-                        bend.path.append(start_point)
-                        bend.path.append(end_point)
-                        bend.neighbors = neighbors
-                        bends.append(bend)
+                        combined = Entity(type=Entity.EntityTypes.LINE, inner_radius=bend.inner_radius, k_factor=k_factor, angle=total_angle, length=bend_length)
+                        combined.path.append(start_point)
+                        combined.path.append(end_point)
+                        combined.neighbors = neighbors
+                        # persistent id: digest of the member faces' fingerprints
+                        fingerprints = [self._face_content_fingerprint(h)
+                                        for h in sorted(component, key=lambda h: self.C2_faces.nodes[h]["order"])]
+                        if all(fp is not None for fp in fingerprints):
+                            combined.id = identity.stable_digest(tuple(sorted(fingerprints, key=repr)))
+                        bends.append(combined)
                         continue
 
                 else:
@@ -1665,6 +1689,10 @@ class AdjacencyGraph(object):
 
                 bend = self.extract_bend(node, node_hash, surface_handle, thickness, transformations=transformations, reversed=reversed, display=display, k_factor=k_factor)
                 bend.neighbors = neighbors
+                # persistent id: digest of the source bend face's fingerprint
+                fingerprint = self._face_content_fingerprint(node_hash)
+                if fingerprint is not None:
+                    bend.id = identity.stable_digest(fingerprint)
                 bends.append(bend)
 
         # canonical bend order: quantized geometry, not discovery order, so
