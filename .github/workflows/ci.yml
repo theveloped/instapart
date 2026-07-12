@@ -38,6 +38,9 @@ jobs:
       - name: Run smoke benchmark
         shell: bash -el {0}
         run: python -m benchmarks smoke --jobs 2
+      - name: Identity smoke tests
+        shell: bash -el {0}
+        run: python -m pytest -m smoke tests/test_identity_smoke.py
       - name: Print failure report
         if: failure()
         shell: bash -el {0}
