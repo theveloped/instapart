@@ -5,6 +5,7 @@ status in {pass, warn, fail, skip}. Checks never raise: a broken artifact is a
 failing check, not a harness crash.
 """
 
+import itertools
 import math
 import os
 from collections import namedtuple
@@ -254,15 +255,56 @@ def check_bends(entry, sheet_shapes):
 
     expected_angles = entry.get("expected_bend_angles")
     if expected_angles is not None:
-        observed = sorted(
-            round(180.0 / math.pi * (b.get("angle") or 0.0), 2)
-            for s in sheet_shapes for b in s.get("bends") or []
-        )
-        mirrored = sorted(-a for a in observed)
-        ok = _angles_close(observed, expected_angles) or _angles_close(mirrored, expected_angles)
+        per_shape = [
+            [round(180.0 / math.pi * (b.get("angle") or 0.0), 2) for b in s.get("bends") or []]
+            for s in sheet_shapes
+        ]
+        observed = sorted(a for angles in per_shape for a in angles)
+        # Which side a shape unfolds from is arbitrary (hash-order dependent,
+        # so it can differ per platform), and a mirrored unfold flips the sign
+        # of every bend in that shape. Accept any per-shape combination of
+        # flips — consistent with the mirror-tolerant golden DXF comparison.
+        ok = _angles_close_up_to_shape_mirror(per_shape, expected_angles)
         checks.append(_result("bend_angles_frozen", "pass" if ok else "fail",
                               measured=observed, expected=expected_angles))
     return checks
+
+
+def _angles_close_up_to_shape_mirror(per_shape, expected, combo_cap=200000):
+    """True if some per-shape sign-flip assignment matches the expected angles.
+
+    Shapes whose angle multiset is flip-invariant contribute a fixed part;
+    the rest are grouped by identical multiset (only the number flipped per
+    group matters), which keeps the exact enumeration tiny even for large
+    assemblies. Falls back to whole-file flips past combo_cap.
+    """
+    fixed = []
+    groups = {}
+    for angles in per_shape:
+        straight = tuple(sorted(angles))
+        flipped = tuple(sorted(-a for a in angles))
+        if straight == flipped:
+            fixed.extend(straight)
+        else:
+            groups[straight] = groups.get(straight, 0) + 1
+
+    group_items = sorted(groups.items())
+    combos = 1
+    for _, count in group_items:
+        combos *= count + 1
+    if combos > combo_cap:
+        all_angles = fixed + [a for s, count in group_items for _ in range(count) for a in s]
+        return (_angles_close(sorted(all_angles), expected)
+                or _angles_close(sorted(-a for a in all_angles), expected))
+
+    for flip_counts in itertools.product(*(range(count + 1) for _, count in group_items)):
+        candidate = list(fixed)
+        for (straight, count), flips in zip(group_items, flip_counts):
+            candidate.extend(a for _ in range(count - flips) for a in straight)
+            candidate.extend(-a for _ in range(flips) for a in straight)
+        if _angles_close(sorted(candidate), expected):
+            return True
+    return False
 
 
 def _angles_close(a, b, tol=0.5):

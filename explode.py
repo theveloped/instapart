@@ -22,18 +22,17 @@ from OCC.Core.STEPControl import STEPControl_AsIs
 from OCC.Core.TopoDS import TopoDS_Compound
 from OCC.Core.BRep import BRep_Builder
 
-import uuid
-
 # utils
 from utils import get_rondom_color, iterate_shape_parts, part_compound_shape, get_shape_solids, redirect_stdout, suppress_stdout_stderr, sanitize_filename, shape_hash
 from naming import generate_name
+import identity
 
 import logging
 logger = logging.getLogger()
 
 class Part(object):
 
-    def __init__(self, id=None, root=None, name=None, index=0, level=0, label=None, shape=None, shapes=[], solids=[], messages=[], location=None, reference=None, components=[]):
+    def __init__(self, id=None, root=None, name=None, index=0, level=0, label=None, shape=None, shapes=None, solids=None, messages=None, location=None, reference=None, components=None):
         self.id = id
         self.count = None
         self.root = root
@@ -42,17 +41,15 @@ class Part(object):
         self.level = level
         self.label = label
         self.shape = shape
-        self.shapes = shapes
+        self.shapes = shapes if shapes is not None else []
         self.location = location
         self.reference = reference
-        self.components = components
+        self.components = components if components is not None else []
 
-        self.solids = solids
-        self.messages = messages
-
-        if not id:
-            # uuid similar to NDB datastore
-            self.id = uuid.uuid4().int >> 75
+        self.solids = solids if solids is not None else []
+        self.messages = messages if messages is not None else []
+        # id stays None until a content-derived id is assigned (identity.py);
+        # previously a random uuid4-derived int per run
 
     def __dict__(self):
         json_components = []
@@ -71,6 +68,14 @@ class Part(object):
         return json.dumps(data, sort_keys=True, indent=2, separators=(',', ': '))
 
 
+def _assembly_content_id(components):
+    """Digest of the children's content ids and counts; None if no child has one."""
+    child_ids = sorted((c.id or 0, c.count or 0) for c in components or [] if c)
+    if not any(child_id for child_id, _ in child_ids):
+        return None
+    return identity.stable_digest(tuple(child_ids))
+
+
 class TreeBuilder(object):
     """ A class for analyzing the assembly structure of a STEP file"""
 
@@ -79,6 +84,7 @@ class TreeBuilder(object):
         self.part_names = set()
         self.part_index = 0
         self.references = {}
+        self.content_ids = {}
 
         # Create the document (handles are transparent since pythonocc 7.x;
         # no XCAFApp application needed for reading). Pass a plain str: the
@@ -146,6 +152,13 @@ class TreeBuilder(object):
         part.reference = self.references[reference_hash]
         part.shape = shape
 
+        # content-derived persistent id, computed once per prototype shape
+        # (duplicates share the untransformed TShape; the id is
+        # location-independent so the prototype stands for every instance)
+        if reference_hash not in self.content_ids:
+            self.content_ids[reference_hash] = identity.solid_content_id(shape)
+        part.id = self.content_ids[reference_hash]
+
         # Transformation paramaters of shape
         transformation = part.location.Transformation()
 
@@ -202,6 +215,7 @@ class TreeBuilder(object):
 
         if part.is_assembly:
             part.components = self.getComponents(part, ignore_duplicates=ignore_duplicates, display=display)
+            part.id = _assembly_content_id(part.components)
 
         elif part.is_simple:
             part.shapes = self.getShapes(part, display=display)
@@ -262,6 +276,7 @@ class TreeBuilder(object):
                 component = self.getPart(labels.Value(i), root=root, level=1, ignore_duplicates=ignore_duplicates, display=display)
                 components.append(component)
             self.tree.components = components
+            self.tree.id = _assembly_content_id(components)
 
         # Simply use standard label
         else:
@@ -372,10 +387,12 @@ def main(file_path, output_dir, extension="stp", explode_bodies=False, limit_bod
             filename_trim="END",
             filename_prefix=None,
             filename_postfix=None,
-            export_names={}
+            export_names=None
         ):
     input_file = os.path.basename(file_path)
     input_file = input_file.rsplit(".", 1)[0]
+    if export_names is None:
+        export_names = {}
     if output_dir not in export_names:
         export_names[output_dir] = [input_file]
 
@@ -429,7 +446,7 @@ def main(file_path, output_dir, extension="stp", explode_bodies=False, limit_bod
                         break
 
         else:
-            export_name = generate_name(input_file, part, export_names[output_dir],
+            original_name, export_name = generate_name(input_file, part, export_names[output_dir],
                     source=filename_source,
                     charset=filename_charset,
                     min_length=filename_min,
@@ -438,7 +455,7 @@ def main(file_path, output_dir, extension="stp", explode_bodies=False, limit_bod
                     prefix=filename_prefix,
                     postfix=filename_postfix
                 )
-            export_names[output_dir].append(export_name)
+            export_names[output_dir].append(original_name)
 
             output_file = "{}.{}".format(export_name, extension)
             output_path = os.path.join(output_dir, output_file)

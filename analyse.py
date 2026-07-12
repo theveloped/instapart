@@ -42,7 +42,7 @@ def get_rondom_color():
     return colors[randint(0, 7)]
 
 
-def grouped_graph(graph, base_hash, node_labels={}, node_groups={}):
+def grouped_graph(graph, base_hash, node_labels=None, node_groups=None):
     """Contract all C2-connected face groups of the C1 component around base.
 
     Rewritten from the legacy incremental merge, which was edge-order
@@ -52,11 +52,16 @@ def grouped_graph(graph, base_hash, node_labels={}, node_groups={}):
     continuity==2 subgraph is order-independent and expresses the same
     intent: one node per multi-face bend / cylinder ring.
     """
+    node_labels = node_labels if node_labels is not None else {}
+    node_groups = node_groups if node_groups is not None else {}
+    # face hashes are address-derived, so anything set-shaped iterates in a
+    # process-random order; sort by the deterministic traversal index
+    traversal_order = lambda node_hash: graph.C1_faces.nodes[node_hash]["order"]
     component = nx.node_connected_component(graph.C1_faces, base_hash)
     subgraph = graph.C1_faces.subgraph(component)
 
     c2_graph = nx.Graph()
-    c2_graph.add_nodes_from(component)
+    c2_graph.add_nodes_from(sorted(component, key=traversal_order))
     c2_graph.add_edges_from(
         (node_a, node_b)
         for node_a, node_b, continuity in subgraph.edges(data="continuity")
@@ -65,7 +70,7 @@ def grouped_graph(graph, base_hash, node_labels={}, node_groups={}):
 
     grouped = nx.Graph()
     for group in nx.connected_components(c2_graph):
-        members = list(group)
+        members = sorted(group, key=traversal_order)
         leader = base_hash if base_hash in group else members[0]
         grouped.add_node(leader, shapes=members)
         node_groups[leader] = members
@@ -120,6 +125,9 @@ def get_rectangular_parameters(aag, graph, x_axis=None):
     normals = []
     mid_points = []
     corner_radii = []
+    # determinism: the "shapes" member lists come from grouped_graph, which
+    # sorts them by traversal order, so normals order and thus the x_axis
+    # choice (vectors[0]) are stable across runs
     for node_hash in graph.nodes():
         for shape_hash in graph.nodes[node_hash]["shapes"]:
             node = aag.C1_faces.nodes[shape_hash]
@@ -228,7 +236,10 @@ def get_rectangular_parameters(aag, graph, x_axis=None):
 def analyse_shape(aag, display=None):
     # Get hash of the larges face
     section_data = Section()
-    sorted_areas = sorted(aag.areas, key=lambda x: x[0], reverse=True)
+    # quantized area + traversal-order tie-break: float noise between two
+    # near-equal large faces must not flip the base-face choice across runs
+    # (0.01 mm2 buckets; cross-run area noise is ~1e-5 mm2 on large faces)
+    sorted_areas = sorted(aag.areas, key=lambda x: (-round(x[0], 2), aag.C1_faces.nodes[x[1]]["order"]))
     aag.node_labels = {}
     aag.node_groups = {}
     # base_hash = sorted_areas.pop(0)[1]

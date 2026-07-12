@@ -193,3 +193,122 @@ class TestManifest:
         manifest_mod.save(data, path)
         loaded = manifest_mod.load(path)
         assert loaded["files"] == data["files"]
+
+
+# ---------------------------------------------------------------------------
+# Frozen bend-angle comparison (per-shape mirror tolerance)
+# ---------------------------------------------------------------------------
+
+class TestBendAngleCheck:
+    @staticmethod
+    def _shape(angles_deg):
+        return {"pattern": {}, "bends": [
+            {"angle": math.radians(a), "radius": 1.0, "length": 10.0} for a in angles_deg]}
+
+    @staticmethod
+    def _angle_check(entry, shapes):
+        from benchmarks import invariants
+        checks = invariants.check_bends(entry, shapes)
+        return next(c for c in checks if c.name == "bend_angles_frozen")
+
+    def test_single_shape_mirror_passes(self):
+        entry = {"expected_bend_angles": [-90.0, -90.0]}
+        assert self._angle_check(entry, [self._shape([90.0, 90.0])]).status == "pass"
+
+    def test_per_shape_mirror_passes(self):
+        # one shape of a multi-part file unfolds from the other side
+        # (observed for examples/assy/EMO-72-07-200.stp on Linux)
+        entry = {"expected_bend_angles": sorted([-90.0] * 6 + [45.0] * 2 + [90.0] * 4)}
+        shapes = [
+            self._shape([-90.0, -90.0, 45.0, 45.0]),
+            self._shape([90.0, 90.0, 90.0, 90.0]),   # frozen as -90 x4
+            self._shape([90.0, 90.0, 90.0, 90.0]),
+        ]
+        assert self._angle_check(entry, shapes).status == "pass"
+
+    def test_wrong_angles_still_fail(self):
+        entry = {"expected_bend_angles": [-90.0, -90.0]}
+        assert self._angle_check(entry, [self._shape([45.0, 90.0])]).status == "fail"
+
+    def test_large_assembly_one_shape_flipped(self):
+        # one flipped 4-bend shape in a >12-shape assembly (observed for
+        # examples/assy/3D-Uebersicht-7014-S2.STEP on Linux); grouping by
+        # identical angle multiset keeps the search exact and tiny
+        shapes = ([self._shape([90.0, 90.0])] * 20
+                  + [self._shape([-90.0, -90.0])] * 8
+                  + [self._shape([-95.0, 95.0])]           # flip-invariant
+                  + [self._shape([90.0] * 4)])             # frozen as -90 x4
+        expected = sorted([90.0] * 40 + [-90.0] * 16 + [-95.0, 95.0] + [-90.0] * 4)
+        entry = {"expected_bend_angles": expected}
+        assert self._angle_check(entry, shapes).status == "pass"
+
+    def test_large_assembly_wrong_angles_still_fail(self):
+        shapes = [self._shape([90.0, 90.0])] * 20 + [self._shape([45.0, 45.0])]
+        expected = sorted([90.0] * 40 + [30.0, 30.0])
+        entry = {"expected_bend_angles": expected}
+        assert self._angle_check(entry, shapes).status == "fail"
+
+
+# ---------------------------------------------------------------------------
+# Shape pairing by persistent content id
+# ---------------------------------------------------------------------------
+
+class TestIdPairing:
+    @staticmethod
+    def _job(shapes):
+        return {"tree": {"name": "t", "count": 1, "is_assembly": False,
+                         "shapes": shapes, "components": []}}
+
+    @staticmethod
+    def _shape(shape_id, volume, area):
+        return {"id": shape_id, "type": "SHEET", "volume": volume, "area": area,
+                "pattern": None, "bends": [], "files": []}
+
+    def test_id_pairing_beats_volume_sort(self):
+        # two same-type shapes with volumes inside the float tolerance would
+        # cross-pair under the (type, volume) sort; ids pin them correctly
+        fresh = self._job([self._shape(111, 1000.0, 50.0),
+                           self._shape(222, 1000.0, 70.0)])
+        golden = self._job([self._shape(222, 1000.0, 70.0),
+                            self._shape(111, 1000.0, 50.0)])
+        assert golden_mod.compare_job_json(fresh, golden) == []
+
+    def test_id_mismatch_reported(self):
+        fresh = self._job([self._shape(111, 1000.0, 50.0)])
+        golden = self._job([self._shape(333, 1000.0, 50.0)])
+        diffs = golden_mod.compare_job_json(fresh, golden)
+        assert any("shape ids" in d for d in diffs)
+
+    def test_legacy_fallback_without_ids(self):
+        # shapes without ids (legacy goldens) use the (type, volume) pairing
+        fresh = self._job([{k: v for k, v in self._shape(None, 1000.0, 50.0).items() if k != "id"}])
+        golden = self._job([{k: v for k, v in self._shape(None, 1000.0, 50.0).items() if k != "id"}])
+        assert golden_mod.compare_job_json(fresh, golden) == []
+
+    def test_duplicate_ids_pair_in_walk_order(self):
+        pairs = golden_mod._pair_shapes_by_id(
+            ["f1", "f2"], [7, 7], ["g1", "g2"], [7, 7])
+        assert pairs == [("f1", "g1"), ("f2", "g2")]
+
+
+# ---------------------------------------------------------------------------
+# Golden bookkeeping: golden_metrics.json vs manifest references
+# ---------------------------------------------------------------------------
+
+class TestGoldenBookkeeping:
+    def test_orphaned_golden_metrics_are_exactly_the_known_set(self):
+        """flat_with_curves_1/2/3 goldens are deliberately unlinked (legacy
+        goldens were failed unfolds; see manifest notes). Any other mismatch
+        between golden_metrics.json and the manifest is unintended drift."""
+        golden_metrics = golden_mod.load_golden_metrics()
+        manifest = manifest_mod.load()
+        referenced = {dxf for e in manifest["files"] for dxf in e.get("golden_dxf") or []}
+        orphans = set(golden_metrics) - referenced
+        assert orphans == {
+            "examples/3dhubs/flat_with_curves_1/_Unsaved_.dxf",
+            "examples/3dhubs/flat_with_curves_2/_Unsaved_.dxf",
+            "examples/3dhubs/flat_with_curves_3/_Unsaved_.dxf",
+        }
+        assert referenced <= set(golden_metrics), (
+            "manifest references golden DXFs missing from golden_metrics.json: %s"
+            % sorted(referenced - set(golden_metrics)))

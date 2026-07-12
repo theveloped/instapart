@@ -128,6 +128,9 @@ class Shape(object):
     def __init__(self, shape_type=None):
         self.type = shape_type or Shape.ShapeTypes.OTHER
 
+        # content-derived persistent id (identity.solid_content_id)
+        self.id = None
+
         self.area = None
         self.volume = None
 
@@ -203,21 +206,21 @@ class Feature(object):
         EMBOSSING = 1
         OTHER = 0
 
-    def __init__(self, feature_type=None, component=[], groups=[], base_a=[], base_b=[], loop_a=[], loop_b=[], extrusion=None, embossing=None, chamfer_a=False, chamfer_b=False, wires=[]):
+    def __init__(self, feature_type=None, component=None, groups=None, base_a=None, base_b=None, loop_a=None, loop_b=None, extrusion=None, embossing=None, chamfer_a=False, chamfer_b=False, wires=None):
         # self.type = feature_type or Section.Feature.FeatureTypes.OTHER
 
-        self.loop_a = loop_a
-        self.loop_b = loop_b
+        self.loop_a = loop_a if loop_a is not None else []
+        self.loop_b = loop_b if loop_b is not None else []
         self.extrusion = extrusion
         self.embossing = embossing
         self.chamfer_a = chamfer_a
         self.chamfer_b = chamfer_b
-        self.wires = wires
+        self.wires = wires if wires is not None else []
 
-        self.component = component
-        self.groups = groups
-        self.base_a = base_a
-        self.base_b = base_b
+        self.component = component if component is not None else []
+        self.groups = groups if groups is not None else []
+        self.base_a = base_a if base_a is not None else []
+        self.base_b = base_b if base_b is not None else []
 
         self.projections = None
 

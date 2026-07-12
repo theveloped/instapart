@@ -1,0 +1,27 @@
+# Lint-only configuration. No formatter is configured on purpose: the live
+# modules retain their pre-port style and must not be mass-reformatted.
+[tool.ruff]
+target-version = "py311"
+line-length = 200
+# Legacy Python 2.7 modules kept for reference (see README) + installer assets.
+extend-exclude = [
+    "aag.py",
+    "activate.py",
+    "documents.py",
+    "observe.py",
+    "service.py",
+    "setup.py",
+    "scripts",
+]
+
+[tool.ruff.lint]
+# Conservative, correctness-only rule set (F821 would have caught the
+# unassigned-variable bug in cycad.save). Style rules are deliberately off.
+# F401/F811/F841 (unused imports/redefinitions/locals) have ~190 pre-existing
+# hits in the ported modules; enable them after a dedicated cleanup pass.
+select = [
+    "E9",   # syntax errors / io errors
+    "F63",  # invalid comparisons / assertion issues
+    "F7",   # syntax-adjacent errors (return outside function, etc.)
+    "F82",  # undefined names
+]

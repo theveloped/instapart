@@ -30,8 +30,6 @@ from OCC.Core.BRep import BRep_Tool
 from OCC.Core.GeomAbs import GeomAbs_G1
 from OCC.Core.IFSelect import IFSelect_ItemsByEntity
 
-from OCC.Core.Bnd import Bnd_Box
-from OCC.Core.BRepBndLib import brepbndlib
 from OCC.Core.BRepBuilderAPI import (BRepBuilderAPI_Transform,
                                 BRepBuilderAPI_GTransform,
                                 BRepBuilderAPI_MakeEdge,
@@ -81,7 +79,8 @@ from models import Loop, Shape, Feature
 from bounding_box import get_boundingbox_dimensions
 
 # utils
-from utils import import_step, get_area, get_volume, get_shape_solids, redirect_stdout, suppress_stdout_stderr, shape_hash
+from utils import import_step, get_area, get_volume, get_shape_solids, redirect_stdout, suppress_stdout_stderr, shape_hash, largest_wire_index
+import identity
 
 import logging
 logger = logging.getLogger()
@@ -569,6 +568,7 @@ class AdjacencyGraph(object):
     def __init__(self, shape, TOLLERANCE=1e-6):
         self.shape = shape
         self.TOLLERANCE = TOLLERANCE
+        self._identity_frame_cache = None
 
         # Face graphs stored as networkX graphs
         # Graph nodes in the graph represent shape faces
@@ -589,6 +589,23 @@ class AdjacencyGraph(object):
 
     # Angular tolerance for geometric tangency detection (radians, ~0.57deg)
     SMOOTH_ANGLE_TOLERANCE = 1e-2
+
+    def _identity_frame(self):
+        """(solid centroid, characteristic scale) for content fingerprints."""
+        if self._identity_frame_cache is None:
+            volume = abs(get_volume(self.shape))
+            scale = max(volume ** (1.0 / 3.0), 1.0)
+            self._identity_frame_cache = (identity.solid_centroid(self.shape), scale)
+        return self._identity_frame_cache
+
+    def _face_content_fingerprint(self, node_hash):
+        """Fingerprint of one face for bend identity; None on failure."""
+        try:
+            centroid, scale = self._identity_frame()
+            face = self.C1_faces.nodes[node_hash]["shape"]
+            return identity.face_fingerprint(face, centroid, scale)
+        except Exception:
+            return None
 
     def edge_continuity(self, edge, node_a, node_b):
         """
@@ -675,6 +692,7 @@ class AdjacencyGraph(object):
         """
         self.areas = []
         edge_edges = []
+        face_order = 0
         solid_explorer = TopExp_Explorer(self.shape, TopAbs_FACE)
         while solid_explorer.More():
             face = topods.Face(solid_explorer.Current())
@@ -685,9 +703,12 @@ class AdjacencyGraph(object):
             face_area = abs(get_area(face))
             self.areas.append((face_area, face_hash))
 
-            # add face + attributes to graph
+            # add face + attributes to graph; `order` is the deterministic
+            # explorer traversal index, the canonical sort key wherever face
+            # hashes (address-derived) pass through sets
             convexity, curvature, radii, directions = face_convexity(face)
-            graph_faces.add_node(face_hash, shape=face, convexity=convexity, curvature=curvature, radii=radii, directions=directions, bend_radius=None, k_factor=None)
+            graph_faces.add_node(face_hash, shape=face, convexity=convexity, curvature=curvature, radii=radii, directions=directions, bend_radius=None, k_factor=None, order=face_order)
+            face_order += 1
             face_node = graph_faces.nodes[face_hash]
 
             # Loop over all edges of current face
@@ -882,8 +903,10 @@ class AdjacencyGraph(object):
         open_wire_count = 0
         used_edge_hashes = set()
 
-        # Loop over all nodes (faces) in the graph
-        for node_hash in graph.nodes():
+        # Loop over all nodes (faces) in the graph. Sorted: subgraph views
+        # iterate their (address-hash) node set when it is smaller than half
+        # the parent graph, which is process-random order.
+        for node_hash in sorted(graph.nodes(), key=lambda h: graph.nodes[h]["order"]):
                 node = graph.nodes[node_hash]
                 node_scale = self.node_scale(node, thickness, k_factor=k_factor)
 
@@ -1298,10 +1321,9 @@ class AdjacencyGraph(object):
         node_transformations = {}
         node_flattened = {}
 
-        # Use random hash if none is given
+        # Use the first face in traversal order if none is given
         if not base_hash:
-            for base_hash in graph.nodes():
-                break
+            base_hash = min(graph.nodes(), key=lambda h: graph.nodes[h]["order"])
 
         if not align:
             # Compute surface to unfold other faces to
@@ -1332,8 +1354,11 @@ class AdjacencyGraph(object):
         if display:
             self.plot_transformed_face(base_node["shape"], base_surface_handle, transformations=node_transformations[base_hash], color="red")
 
-        # Loop over all adjacent faces until all are covered
-        for successors in nx.bfs_successors(graph, source=base_hash):
+        # Loop over all adjacent faces until all are covered. Neighbor order
+        # decides each face's unfold parent, and subgraph-view adjacency can
+        # iterate in address-hash set order — sort for a reproducible tree.
+        for successors in nx.bfs_successors(graph, source=base_hash,
+                                            sort_neighbors=lambda nodes: sorted(nodes, key=lambda h: graph.nodes[h]["order"])):
 
             predecessor_hash = successors[0]
             for successor_hash in successors[1]:
@@ -1589,8 +1614,9 @@ class AdjacencyGraph(object):
         bends = []
         used_edge_hashes = set()
 
-        # Loop over all nodes (faces) in the graph
-        for node_hash in graph.nodes():
+        # Loop over all nodes (faces) in the graph, in traversal order
+        # (subgraph views can iterate in address-hash set order)
+        for node_hash in sorted(graph.nodes(), key=lambda h: graph.nodes[h]["order"]):
 
             if node_hash in used_edge_hashes:
                 continue
@@ -1616,7 +1642,10 @@ class AdjacencyGraph(object):
 
                         sub_bends = []
                         total_angle = 0.0
-                        for node_hash in component:
+                        # component is a set of address-derived hashes; sort
+                        # by traversal order so the weighted start/end points
+                        # are reproducible across runs
+                        for node_hash in sorted(component, key=lambda h: self.C2_faces.nodes[h]["order"]):
 
                             node = graph.nodes[node_hash]
                             used_edge_hashes.add(node_hash)
@@ -1646,16 +1675,36 @@ class AdjacencyGraph(object):
 
                         bend_length = math.sqrt(math.pow(start_point[0] - end_point[0], 2) + math.pow(start_point[1] - end_point[1], 2))
 
-                        bend = Entity(type=Entity.EntityTypes.LINE, inner_radius=bend.inner_radius, k_factor=k_factor, angle=total_angle, length=bend_length)
-                        bend.path.append(start_point)
-                        bend.path.append(end_point)
-                        bend.neighbors = neighbors
-                        bends.append(bend)
+                        combined = Entity(type=Entity.EntityTypes.LINE, inner_radius=bend.inner_radius, k_factor=k_factor, angle=total_angle, length=bend_length)
+                        combined.path.append(start_point)
+                        combined.path.append(end_point)
+                        combined.neighbors = neighbors
+                        # persistent id: digest of the member faces' fingerprints
+                        fingerprints = [self._face_content_fingerprint(h)
+                                        for h in sorted(component, key=lambda h: self.C2_faces.nodes[h]["order"])]
+                        if all(fp is not None for fp in fingerprints):
+                            combined.id = identity.stable_digest(tuple(sorted(fingerprints, key=repr)))
+                        bends.append(combined)
                         continue
+
+                else:
+                    # single uncombined bend: neighbors would otherwise be
+                    # stale from a previous iteration (or unbound)
+                    neighbors = frozenset(self.C1_faces.neighbors(node_hash)) if node_hash in self.C1_faces else frozenset()
 
                 bend = self.extract_bend(node, node_hash, surface_handle, thickness, transformations=transformations, reversed=reversed, display=display, k_factor=k_factor)
                 bend.neighbors = neighbors
+                # persistent id: digest of the source bend face's fingerprint
+                fingerprint = self._face_content_fingerprint(node_hash)
+                if fingerprint is not None:
+                    bend.id = identity.stable_digest(fingerprint)
                 bends.append(bend)
+
+        # canonical bend order: quantized geometry, not discovery order, so
+        # the serialized bend list and the group numbering below are stable
+        # across runs and platforms
+        bends.sort(key=lambda b: (round(b.angle or 0.0, 6), round(b.length or 0.0, 3),
+                                  tuple(round(c, 3) for point in b.path for c in point)))
 
         common_id = 1
         common_bends = {}
@@ -1690,8 +1739,8 @@ class AdjacencyGraph(object):
         bends = []
         used_edge_hashes = set()
 
-        # Loop over all nodes (faces) in the graph
-        for node_hash in graph.nodes():
+        # Loop over all nodes (faces) in the graph, in traversal order
+        for node_hash in sorted(graph.nodes(), key=lambda h: graph.nodes[h]["order"]):
             node = graph.nodes[node_hash]
 
             # Loop over all edges, with internal wires grouped
@@ -1714,7 +1763,11 @@ class AdjacencyGraph(object):
         second_hash = None
 
         used_hashes = set()
-        sorted_areas = sorted(self.areas, key=lambda x: x[0], reverse=True)
+        # quantized area + traversal-order tie-break: float noise between two
+        # near-equal large faces must not flip the base face (unfold side).
+        # 0.01 mm2 buckets: observed cross-run area noise is ~1e-5 mm2 on
+        # large faces, so anything finer leaves the sort key itself noisy
+        sorted_areas = sorted(self.areas, key=lambda x: (-round(x[0], 2), self.C1_faces.nodes[x[1]]["order"]))
 
         # First side (largest face)
         first_area, first_hash = sorted_areas[0]
@@ -2590,9 +2643,8 @@ def main(
                 shape = import_step(step_path)
 
     except Exception:
-        logger.error("Could not read file and/or assembly structure")
-        # traceback.print_exc()
-        sys.exit(1)
+        logger.exception("Could not read file and/or assembly structure")
+        return False
 
     solid = None
     for solid in get_shape_solids(shape, sort=True, repair=repair):
@@ -2600,7 +2652,7 @@ def main(
 
     if not solid:
         logger.error("Could not extract a valid solid for unfolding")
-        sys.exit(1)
+        return False
 
     try:
         aag = AdjacencyGraph(solid)
@@ -2609,9 +2661,8 @@ def main(
         aag.grouped()
 
     except Exception:
-        logger.error("Could not compute shape topology")
-        # traceback.print_exc()
-        sys.exit(1)
+        logger.exception("Could not compute shape topology")
+        return False
 
     try:
         shape_data = Shape()
@@ -2619,12 +2670,16 @@ def main(
         shape_data.area = sum([areas[0] for areas in aag.areas])
         shape_data.width, shape_data.height, shape_data.length = get_boundingbox_dimensions(solid, use_mesh=False)
 
+        if not shape_data.area:
+            logger.warning("Could not detect shape thickness and/or base flange (zero surface area)")
+            return False
+
         min_thickness = 2 * shape_data.volume / shape_data.area
         first_hash, second_hash, thickness = aag.get_sheet_base(min_thickness=min_thickness, display=display)
 
         if not thickness:
             logger.warning("Could not detect shape thickness and/or base flange")
-            sys.exit(1)
+            return False
 
         # Get first side graph
         graph_a = aag.get_connected_subgraph(first_hash, ignore_complex=True, display=display)
@@ -2673,20 +2728,10 @@ def main(
         # part is a bent or flat part
         if open_wire_count != 0:
             logger.warning("Part can not be interpreted as a sheet metal part")
-            sys.exit(1)
+            return False
 
         # Analyse result
-        max_size = 0
-        max_index = 0
-        bbox = Bnd_Box()
-        for i in range(len(loops)):
-            brepbndlib.Add(loops[i].wires[0], bbox)
-            bb_xmin, bb_ymin, _, bb_xmax, bb_ymax, _ = bbox.Get()
-            wire_size = (bb_xmax - bb_xmin) * (bb_ymax - bb_ymin)
-
-            if wire_size > max_size:
-                max_size = wire_size
-                max_index = i
+        max_index, _ = largest_wire_index([loop.wires[0] for loop in loops])
 
         # Generate single unfolded face based on wires
         # max_loop = loops.pop(max_index)
@@ -2717,7 +2762,7 @@ def main(
         if relative_volume_threshold:
             if abs((volume_error) / shape_data.volume) > relative_volume_threshold:
                 logger.error("Volume error to large after unfolding")
-                sys.exit(1)
+                return False
 
         if absolute_volume_threshold:
             if abs(volume_error) > absolute_volume_threshold:
@@ -2742,11 +2787,11 @@ def main(
         else:
             pattern.save(output_path, add_text=False, dxf_type="CYCAD")
 
+        return True
 
     except Exception:
-        logger.error("Shape could not be processed")
-        # traceback.print_exc()
-        sys.exit(1)
+        logger.exception("Shape could not be processed")
+        return False
 
 
 

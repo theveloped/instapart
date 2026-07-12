@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Fast job: lint + harness self-tests. No OCC / conda needed.
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: pip install pytest ezdxf pyyaml ruff
+      - name: Lint
+        run: python -m ruff check .
+      - name: Unit tests
+        # module form puts the repo root on sys.path (tests import `benchmarks`)
+        run: python -m pytest
+      - name: Validate benchmark manifest
+        run: python -m benchmarks validate
+
+  # Smoke benchmark: ~11 STEP files through the full pipeline (needs OCC).
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+      - name: Run smoke benchmark
+        shell: bash -el {0}
+        run: python -m benchmarks smoke --jobs 2
+      - name: Identity smoke tests
+        shell: bash -el {0}
+        run: python -m pytest -m smoke tests/test_identity_smoke.py
+      - name: Print failure report
+        if: failure()
+        shell: bash -el {0}
+        run: |
+          cat benchmarks/runs/*/report.md || true
+          echo "--- failing results ---"
+          python - <<'EOF' || true
+          import glob, json
+          for path in glob.glob("benchmarks/runs/*/results.jsonl"):
+              for line in open(path, encoding="utf-8"):
+                  r = json.loads(line)
+                  if r.get("status") in ("fail", "crash", "timeout"):
+                      print(json.dumps(r, indent=2))
+          EOF
+      - name: Upload run report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-report
+          path: |
+            benchmarks/runs/**/report.md
+            benchmarks/runs/**/results.jsonl
+            benchmarks/runs/**/logs/
+          if-no-files-found: ignore
+
+  # Full 127-file corpus (long). Used to verify behavior-changing fixes via
+  # `python -m benchmarks compare` on the results.jsonl of two runs. Trigger
+  # manually via workflow_dispatch, or by putting [full-corpus] in the commit
+  # message (integrations without workflow-dispatch permission need the latter).
+  full:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[full-corpus]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+      - name: Run full corpus
+        shell: bash -el {0}
+        run: python -m benchmarks run --jobs 4 --label ci-full
+      - name: Print results
+        # results.jsonl in the log makes runs comparable without artifact
+        # downloads (python -m benchmarks compare reads the reconstructed file)
+        if: always()
+        shell: bash -el {0}
+        run: |
+          echo "===BEGIN results.jsonl==="
+          cat benchmarks/runs/*/results.jsonl || true
+          echo "===END results.jsonl==="
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-results
+          path: |
+            benchmarks/runs/**/results.jsonl
+            benchmarks/runs/**/run.json
+            benchmarks/runs/**/report.md
+          if-no-files-found: ignore

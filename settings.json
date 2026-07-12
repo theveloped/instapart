@@ -7,7 +7,7 @@
         "filename_min": null,
         "filename_max": null,
         "filename_trim": "END",
-        "filename_postfix": null,
+        "filename_prefix": null,
         "filename_postfix": null,
         "k_factor": 0.5,
         "export": ["STP"],

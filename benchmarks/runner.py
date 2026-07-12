@@ -18,6 +18,9 @@ from .manifest import REPO_ROOT
 
 RUNS_DIR = Path(__file__).resolve().parent / "runs"
 BASELINE_PATH = Path(__file__).resolve().parent / "baseline.json"
+# Committed snapshot of the blessed run's results, so `compare` works on a
+# fresh clone where the (gitignored) run directory does not exist.
+BASELINE_DIR = Path(__file__).resolve().parent / "baseline"
 HISTORY_PATH = Path(__file__).resolve().parent / "history.csv"
 
 CRASH_CODES = {
@@ -90,7 +93,7 @@ def run_one(entry, run_dir, jobs_env, timeout_scale=1.0, k_factor=0.5, features=
         return record, None
 
     record["timings"] = worker_result.get("timings") or {}
-    for key in ("parts_found", "sheets", "tubes", "failed_shapes", "message_codes", "metrics"):
+    for key in ("parts_found", "sheets", "tubes", "failed_shapes", "shape_ids", "message_codes", "metrics"):
         if key in worker_result:
             record[key] = worker_result[key]
     if worker_result.get("error"):
@@ -122,6 +125,11 @@ def execute(entries, jobs=1, timeout_scale=1.0, keep_artifacts=False, label=""):
     env = dict(os.environ)
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    # The pipeline has hash-order-dependent behavior (unfold side selection,
+    # occasionally classification); random per-process str hashing makes runs
+    # flip results on a handful of corpus files. Pin the seed so runs are
+    # reproducible on a given platform.
+    env["PYTHONHASHSEED"] = "0"
 
     results = []
 
@@ -273,7 +281,12 @@ def cmd_bless(args):
     run_dir = find_run(args.args[0] if args.args else "latest")
     with open(BASELINE_PATH, "w", encoding="utf-8", newline="\n") as fh:
         json.dump({"run": run_dir.name}, fh, indent=2)
+    BASELINE_DIR.mkdir(exist_ok=True)
+    shutil.copy2(run_dir / "results.jsonl", BASELINE_DIR / "results.jsonl")
+    if (run_dir / "run.json").exists():
+        shutil.copy2(run_dir / "run.json", BASELINE_DIR / "run.json")
     print("Blessed baseline: %s" % run_dir.name)
+    print("Snapshot copied to %s (commit it so `compare` works on fresh clones)" % BASELINE_DIR)
     return 0
 
 

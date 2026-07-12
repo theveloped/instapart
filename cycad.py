@@ -20,8 +20,6 @@ from OCC.Core.GeomProjLib import geomprojlib
 from OCC.Core.BRep import BRep_Tool
 from OCC.Core.IFSelect import IFSelect_ItemsByEntity
 
-from OCC.Core.Bnd import Bnd_Box
-from OCC.Core.BRepBndLib import brepbndlib
 from OCC.Core.BRepBuilderAPI import (
     BRepBuilderAPI_Transform,
     BRepBuilderAPI_GTransform,
@@ -99,6 +97,8 @@ from ezdxf.enums import TextEntityAlignment
 from models import Colors, Feature
 from geometry import Point, Path, almostEqual, almostZero
 from label import main as label_main
+from utils import largest_wire_index
+import identity
 
 TOLLERANCE = 1e-6
 
@@ -168,6 +168,8 @@ class Entity(object):
         COUNTERSINK = 4
 
     def __init__(self, path=None, type=None, radius=None, centroid=None, inner_radius=None, k_factor=None, angle=None, length=None, TOLLERANCE=TOLLERANCE):
+        # content-derived persistent id (assigned by parse_wires/extract_bends)
+        self.id = None
         self.path = path
         if not path:
             self.path = Path()
@@ -367,10 +369,10 @@ class Entity(object):
 
 
 class Pattern(object):
-    def __init__(self, thickness, wires=[], bends=[], loops=[], material=None, quantity=None, date=None, TOLLERANCE=TOLLERANCE):
-        self.wires = wires
-        self.loops = loops
-        self.bends = bends
+    def __init__(self, thickness, wires=None, bends=None, loops=None, material=None, quantity=None, date=None, TOLLERANCE=TOLLERANCE):
+        self.wires = wires if wires is not None else []
+        self.loops = loops if loops is not None else []
+        self.bends = bends if bends is not None else []
         self.thickness = thickness
         self.material = material
         self.quantity = quantity
@@ -400,23 +402,9 @@ class Pattern(object):
         self.bends.append(bend)
 
     def contour_index(self):
-        max_size = 0
-        max_index = 0
-        bbox = Bnd_Box()
-
-        # for i in range(len(self.wires)-1, -1, -1):
-        for i in range(len(self.loops)):
-            brepbndlib.Add(self.loops[i].wires[0], bbox)
-
-            bb_xmin, bb_ymin, _, bb_xmax, bb_ymax, _ = bbox.Get()
-            wire_size = (bb_xmax - bb_xmin) * (bb_ymax - bb_ymin)
-
-            if wire_size > max_size:
-                max_size = wire_size
-                max_index = i
-
-            # logger.debug("WIRE %s IS: %s" % (i, wire_size))
-            # logger.debug("WIRE TYPE %s" % (self.wires[i].ShapeType()))
+        # per-wire boxes select the outer contour; the accumulated box keeps
+        # the overall pattern bounds for origin/width/height
+        max_index, bbox = largest_wire_index([loop.wires[0] for loop in self.loops])
 
         xmin, ymin, zmin, xmax, ymax, zmax = bbox.Get()
 
@@ -466,10 +454,61 @@ class Pattern(object):
 
                 self.holes.append(entity)
 
+        # canonical hole order (largest first, geometry tie-breaks) so DXF
+        # and JSON output do not depend on wire discovery order
+        self.holes.sort(key=self._hole_sort_key)
+
+        # persistent ids: rigid-motion-invariant signature (area, perimeter,
+        # distance to the contour centroid — the proven golden-metrics recipe)
+        contour_centroid = self._entity_centroid(self.contour)
+        self.contour.id = self._entity_content_id(self.contour, contour_centroid)
+        for hole in self.holes:
+            hole.id = self._entity_content_id(hole, contour_centroid)
+
         # TODO: Check orientations of wires for bulges
         # if wire.Orientation() != 0:
         #         wire.Reverse()
         pass
+
+    @staticmethod
+    def _hole_sort_key(entity):
+        try:
+            area = entity.compute_area()
+            length = entity.compute_length()
+        except Exception:
+            area, length = 0.0, 0.0
+        first_point = entity.path[0] if len(entity.path) else [0.0, 0.0]
+        # coarse buckets: cross-run float noise must stay inside one bucket
+        return (-round(area, 2), round(length, 3),
+                round(first_point[0], 3), round(first_point[1], 3))
+
+    @staticmethod
+    def _entity_centroid(entity):
+        if entity.centroid is not None:
+            return (entity.centroid[0], entity.centroid[1])
+        try:
+            point = entity.path.centroid()
+            return (point.x, point.y)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _entity_content_id(entity, contour_centroid):
+        try:
+            area = entity.compute_area()
+            length = entity.compute_length()
+            centroid = Pattern._entity_centroid(entity)
+            if centroid is None or contour_centroid is None:
+                distance = None
+            else:
+                distance = math.sqrt((centroid[0] - contour_centroid[0]) ** 2
+                                     + (centroid[1] - contour_centroid[1]) ** 2)
+            return identity.stable_digest(
+                identity.quantize(area, 1e-3),
+                identity.quantize(length, 1e-3),
+                identity.quantize(distance, 1e-3))
+        except Exception:
+            return None
 
     def parse_loops(self):
         # contour_index = self.contour_index()
@@ -704,7 +743,8 @@ class Pattern(object):
         return entity
 
 
-    def export_cycad(self, material=None, thickness=None, add_text=True, description=None, messages=[]):
+    def export_cycad(self, material=None, thickness=None, add_text=True, description=None, messages=None):
+        messages = messages if messages is not None else []
         logger.debug("Exporting CYCAD")
 
         # template_path = os.getcwd()
@@ -822,7 +862,8 @@ class Pattern(object):
         return outputStream
 
 
-    def export_dxf(self, template, material=None, thickness=None, add_text=True, description=None, messages=[]):
+    def export_dxf(self, template, material=None, thickness=None, add_text=True, description=None, messages=None):
+        messages = messages if messages is not None else []
         logger.debug("Exporting DXF (template)")
 
         dwg = ezdxf.new("AC1015", setup=True)
@@ -933,7 +974,8 @@ class Pattern(object):
         return outputStream
 
 
-    def export_designer(self, application_name="BYSOFT7_DESIGNER", guid=None, measurementSystem="Metric", material=None, thickness=None, add_text=True, description=None, messages=[]):
+    def export_designer(self, application_name="BYSOFT7_DESIGNER", guid=None, measurementSystem="Metric", material=None, thickness=None, add_text=True, description=None, messages=None):
+        messages = messages if messages is not None else []
         logger.debug("Exporting Designer DXF")
         dwg = ezdxf.new("AC1015", setup=True)
         dwg.appids.add(application_name)
@@ -1079,7 +1121,7 @@ class Pattern(object):
         return outputStream
 
 
-    def save(self, file_path, dxf_type="DESIGNER", description=None, messages=[], add_text=True, template=None):
+    def save(self, file_path, dxf_type="DESIGNER", description=None, messages=None, add_text=True, template=None):
         if dxf_type == "DESIGNER":
             logger.debug("Saving DESIGNER DXF")
             stream = self.export_designer(thickness=self.thickness, material=self.material, description=description, messages=messages, add_text=add_text)
@@ -1091,6 +1133,9 @@ class Pattern(object):
         elif dxf_type == "CYCAD":
             logger.debug("Saving CYCAD DXF")
             stream = self.export_cycad(thickness=self.thickness, material=self.material, description=description, messages=messages, add_text=add_text)
+
+        else:
+            raise ValueError("unknown dxf_type %r (expected DESIGNER, TEMPLATE with a template, or CYCAD)" % dxf_type)
 
         with open(file_path, "w", encoding="utf-8") as output_file:
             output_file.write(stream.getvalue())

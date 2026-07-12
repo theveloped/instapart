@@ -411,6 +411,7 @@ if __name__ == '__main__':
     elif args.command == "flatten":
         logger.info("Starting: FLATTEN")
 
+        failed_files = []
         for file_path in args.input:
 
             with get_display(args.display) as display:
@@ -429,6 +430,12 @@ if __name__ == '__main__':
                         os.mkdir(output_dir)
 
                 logger.info("Flatten {} to {}".format(file_path, output_dir))
-                flatten_main(file_path, output_dir, display=display, align=True, k_factor=args.k_factor, repair=args.repair, material=args.material, check_features=args.features,
+                success = flatten_main(file_path, output_dir, display=display, align=True, k_factor=args.k_factor, repair=args.repair, material=args.material, check_features=args.features,
                     absolute_volume_threshold=args.absolute_volume_threshold,
                     relative_volume_threshold=args.relative_volume_threshold)
+                if not success:
+                    failed_files.append(file_path)
+
+        if failed_files:
+            logger.error("Flatten failed for {} of {} files: {}".format(len(failed_files), len(args.input), failed_files))
+            sys.exit(1)

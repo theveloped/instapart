@@ -24,7 +24,7 @@ from enum import Enum
 # from sklearn.cluster import KMeans
 
 # utils
-from utils import import_step, mean, get_shape_solids, get_volume, get_area, update_shape_parts, iterate_shape_parts, part_compound_shape, redirect_stdout, suppress_stdout_stderr, NullTimer
+from utils import import_step, mean, get_shape_solids, get_volume, get_area, update_shape_parts, iterate_shape_parts, part_compound_shape, redirect_stdout, suppress_stdout_stderr, NullTimer, largest_wire_index
 from flatten import FaceTypes, face_normal, mid_point, face_surface_handle, FaceProperties, get_solid_from_shape, get_largest_solid, referse_feature
 
 # pythonOCC imports
@@ -34,8 +34,6 @@ from OCC.Core.BRepAdaptor import BRepAdaptor_Surface
 from OCC.Core.TopoDS import TopoDS_Compound
 from OCC.Core.BRep import BRep_Builder
 
-from OCC.Core.Bnd import Bnd_Box
-from OCC.Core.BRepBndLib import brepbndlib
 from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_MakeFace
 
 from OCC.Core.gp import gp_Trsf, gp_Vec
@@ -56,6 +54,7 @@ from images import exportSVG, exportPNG
 # pipeline; it is imported lazily inside the export_pdf/export_xls branches.
 
 from naming import generate_name
+import identity
 
 import logging
 logger = logging.getLogger()
@@ -141,7 +140,7 @@ def main(file_path, output_dir,
         filename_trim="END",
         filename_prefix=None,
         filename_postfix=None,
-        export_names={},
+        export_names=None,
         export_template=None,
 
         absolute_volume_threshold=5.0,
@@ -149,6 +148,8 @@ def main(file_path, output_dir,
         timings=None,
     ):
     timings = timings or NullTimer()
+    if export_names is None:
+        export_names = {}
     job_data = Job(file_path, output_dir)
     input_file = os.path.basename(file_path)
     input_file = input_file.rsplit(".", 1)[0]
@@ -249,6 +250,7 @@ def main(file_path, output_dir,
                 logger.warning("Could not compute shape topology")
 
                 shape_data = Shape()
+                shape_data.id = identity.solid_content_id(solid)
                 message = {
                     "code": "001",
                     "description": "Could not compute shape topology",
@@ -263,6 +265,7 @@ def main(file_path, output_dir,
             try:
                 # Tube parts
                 shape_data = Shape()
+                shape_data.id = identity.solid_content_id(solid)
                 with timings.stage("classify"):
                     section_data = analyse_shape(aag, display=None)
 
@@ -273,6 +276,19 @@ def main(file_path, output_dir,
                 shape_data.volume = get_volume(solid)
                 shape_data.area = sum([areas[0] for areas in aag.areas])
                 shape_data.width, shape_data.height, shape_data.length = get_boundingbox_dimensions(solid, use_mesh=False)
+
+                if not shape_data.area:
+                    logger.warning("Could not detect shape thickness and/or base flange (zero surface area)")
+
+                    message = {
+                        "code": "002",
+                        "description": "Could not detect shape thickness and/or base flange",
+                        "value": None
+                    }
+                    shape_data.messages.append(message)
+                    shape_data.files = solid_files
+                    part_solids.append(shape_data)
+                    continue
 
                 min_thickness = 2 * shape_data.volume / shape_data.area
                 with timings.stage("classify"):
@@ -386,18 +402,10 @@ def main(file_path, output_dir,
                 # part is a bent or flat part
                 if open_wire_count == 0:
 
-                    # Analyse result
-                    max_size = 0
-                    max_index = 0
-                    bbox = Bnd_Box()
-                    for i in range(len(loops)):
-                        brepbndlib.Add(loops[i].wires[0], bbox)
-                        bb_xmin, bb_ymin, _, bb_xmax, bb_ymax, _ = bbox.Get()
-                        wire_size = (bb_xmax - bb_xmin) * (bb_ymax - bb_ymin)
-
-                        if wire_size > max_size:
-                            max_size = wire_size
-                            max_index = i
+                    # Analyse result; the accumulated box is the overall
+                    # pattern bounds used for pattern origin/width/height below
+                    max_index, total_bbox = largest_wire_index([loop.wires[0] for loop in loops])
+                    bb_xmin, bb_ymin, _, bb_xmax, bb_ymax, _ = total_bbox.Get()
 
                     # Generate single unfolded face based on wires
                     # max_loop = loops.pop(max_index)
