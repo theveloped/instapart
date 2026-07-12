@@ -78,6 +78,15 @@ def main(argv):
         if cur_codes - base_codes:
             regressions.append("%s: new message codes %s" % (path, sorted(cur_codes - base_codes)))
 
+        # persistent content ids: any drift means the geometry pipeline
+        # produced different shapes for the same input
+        base_ids = base_record.get("shape_ids")
+        cur_ids = cur_record.get("shape_ids")
+        if base_ids and cur_ids and base_ids != cur_ids:
+            changed = len(set(cur_ids).symmetric_difference(base_ids))
+            regressions.append("%s: shape ids changed (%d of %d differ)"
+                               % (path, changed, max(len(base_ids), len(cur_ids))))
+
         # metric drift is a regression even while still passing
         bm = base_record.get("metrics") or {}
         cm = cur_record.get("metrics") or {}

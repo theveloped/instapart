@@ -159,6 +159,14 @@ def compare_job_json(fresh_job, golden_job):
 
     Both inputs are normalized first. Returns list of difference strings.
     """
+    # persistent content ids are stripped by normalize_job (legacy goldens
+    # carry garbage ids), so capture them from the raw structures first;
+    # id-based pairing only engages when every shape on both sides has one
+    fresh_ids = _shape_ids_walk_order(fresh_job)
+    golden_ids = _shape_ids_walk_order(golden_job)
+    use_ids = (bool(fresh_ids) and bool(golden_ids)
+               and all(i is not None for i in fresh_ids + golden_ids))
+
     fresh = metrics.normalize_job(fresh_job)
     golden = metrics.normalize_job(golden_job)
     diffs = []
@@ -168,13 +176,26 @@ def compare_job_json(fresh_job, golden_job):
                      % (sorted(metrics.message_codes(fresh)),
                         sorted(metrics.message_codes(golden))))
 
-    fresh_shapes = _collect_shapes(fresh)
-    golden_shapes = _collect_shapes(golden)
+    if use_ids:
+        fresh_shapes = _collect_shapes(fresh, sort=False)
+        golden_shapes = _collect_shapes(golden, sort=False)
+    else:
+        fresh_shapes = _collect_shapes(fresh)
+        golden_shapes = _collect_shapes(golden)
     if len(fresh_shapes) != len(golden_shapes):
         diffs.append("shape count: %d vs golden %d" % (len(fresh_shapes), len(golden_shapes)))
         return diffs
 
-    for i, (fs, gs) in enumerate(zip(fresh_shapes, golden_shapes)):
+    if use_ids:
+        if sorted(fresh_ids) != sorted(golden_ids):
+            diffs.append("shape ids: %s vs golden %s"
+                         % (sorted(fresh_ids), sorted(golden_ids)))
+            return diffs
+        pairs = _pair_shapes_by_id(fresh_shapes, fresh_ids, golden_shapes, golden_ids)
+    else:
+        pairs = list(zip(fresh_shapes, golden_shapes))
+
+    for i, (fs, gs) in enumerate(pairs):
         label = "shape %d (%s)" % (i, gs.get("type"))
         if fs.get("type") != gs.get("type"):
             diffs.append("%s type: %s vs golden %s" % (label, fs.get("type"), gs.get("type")))
@@ -219,7 +240,7 @@ def compare_job_json(fresh_job, golden_job):
     return diffs
 
 
-def _collect_shapes(job):
+def _collect_shapes(job, sort=True):
     shapes = []
 
     def walk(node):
@@ -230,7 +251,35 @@ def _collect_shapes(job):
             walk(comp)
 
     walk(job.get("tree") or {})
+    if not sort:
+        return shapes
     return sorted(shapes, key=lambda s: (str(s.get("type")), s.get("volume") or 0.0))
+
+
+def _shape_ids_walk_order(job):
+    """Shape ids in tree walk order (same order _collect_shapes(sort=False) uses)."""
+    ids = []
+
+    def walk(node):
+        if not isinstance(node, dict):
+            return
+        for shape in node.get("shapes") or []:
+            ids.append(shape.get("id"))
+        for comp in node.get("components") or []:
+            walk(comp)
+
+    walk(job.get("tree") or {})
+    return ids
+
+
+def _pair_shapes_by_id(fresh_shapes, fresh_ids, golden_shapes, golden_ids):
+    """Pair shapes by content id; duplicate ids (identical parts) pair in
+    walk order, which is harmless since equal ids mean equal geometry."""
+    golden_by_id = {}
+    for shape, shape_id in zip(golden_shapes, golden_ids):
+        golden_by_id.setdefault(shape_id, []).append(shape)
+    return [(shape, golden_by_id[shape_id].pop(0))
+            for shape, shape_id in zip(fresh_shapes, fresh_ids)]
 
 
 def _bend_triples(shape, negate=False):

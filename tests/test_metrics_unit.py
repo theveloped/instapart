@@ -250,6 +250,48 @@ class TestBendAngleCheck:
 
 
 # ---------------------------------------------------------------------------
+# Shape pairing by persistent content id
+# ---------------------------------------------------------------------------
+
+class TestIdPairing:
+    @staticmethod
+    def _job(shapes):
+        return {"tree": {"name": "t", "count": 1, "is_assembly": False,
+                         "shapes": shapes, "components": []}}
+
+    @staticmethod
+    def _shape(shape_id, volume, area):
+        return {"id": shape_id, "type": "SHEET", "volume": volume, "area": area,
+                "pattern": None, "bends": [], "files": []}
+
+    def test_id_pairing_beats_volume_sort(self):
+        # two same-type shapes with volumes inside the float tolerance would
+        # cross-pair under the (type, volume) sort; ids pin them correctly
+        fresh = self._job([self._shape(111, 1000.0, 50.0),
+                           self._shape(222, 1000.0, 70.0)])
+        golden = self._job([self._shape(222, 1000.0, 70.0),
+                            self._shape(111, 1000.0, 50.0)])
+        assert golden_mod.compare_job_json(fresh, golden) == []
+
+    def test_id_mismatch_reported(self):
+        fresh = self._job([self._shape(111, 1000.0, 50.0)])
+        golden = self._job([self._shape(333, 1000.0, 50.0)])
+        diffs = golden_mod.compare_job_json(fresh, golden)
+        assert any("shape ids" in d for d in diffs)
+
+    def test_legacy_fallback_without_ids(self):
+        # shapes without ids (legacy goldens) use the (type, volume) pairing
+        fresh = self._job([{k: v for k, v in self._shape(None, 1000.0, 50.0).items() if k != "id"}])
+        golden = self._job([{k: v for k, v in self._shape(None, 1000.0, 50.0).items() if k != "id"}])
+        assert golden_mod.compare_job_json(fresh, golden) == []
+
+    def test_duplicate_ids_pair_in_walk_order(self):
+        pairs = golden_mod._pair_shapes_by_id(
+            ["f1", "f2"], [7, 7], ["g1", "g2"], [7, 7])
+        assert pairs == [("f1", "g1"), ("f2", "g2")]
+
+
+# ---------------------------------------------------------------------------
 # Golden bookkeeping: golden_metrics.json vs manifest references
 # ---------------------------------------------------------------------------
 
