@@ -44,6 +44,10 @@ class Bend:
     sister_group: int = -1           # collinear simultaneous-forming group id
     angle_overbend: float = None     # target + springback compensation
     angle_relaxed: float = None      # angle after springback
+    zone_width: float = 0.0          # flat bend-allowance length BA consumed by
+                                     # this bend; 0 = sharp hinge (synthetic
+                                     # parts).  Drives the bend-deduction
+                                     # translation in kinematics.fold_transforms.
     face_hashes: tuple = ()          # source cylindrical face hashes
 
     def __post_init__(self):
@@ -64,7 +68,12 @@ class KinematicGraph:
     bends: list
     base_panel: int
     thickness: float
-    z_offset: float = 0.0            # flat-pattern plane offset from the mid-surface
+    z_offset: float = 0.0            # mid-surface height above the pattern
+                                     # plane: the unfolder flattens one SKIN
+                                     # of the sheet, so extracted parts get
+                                     # +/- t/2 (side probed against the
+                                     # solid); synthetic builder parts are
+                                     # defined ON the mid-surface (0)
     source: str = ""                 # provenance (file path or builder name)
 
     def __post_init__(self):

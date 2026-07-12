@@ -16,6 +16,8 @@ Two parameterizations of an active bend are provided:
   roadmap refinement folded into the clearance margin.
 """
 
+import math
+
 import numpy as np
 
 from pressbrake.model import BendAction
@@ -52,18 +54,18 @@ def normalize_axis(axis_point, axis_dir, child_reference):
     return axis_dir
 
 
-def rotation_about_line(point2, direction2, angles):
+def rotation_about_line(point2, direction2, angles, z=0.0):
     """
     Homogeneous rotations about the 3D line through ``point2`` (embedded at
-    z=0) with in-plane unit ``direction2``.  ``angles`` may be a scalar or an
-    (S,) array; returns (4,4) or (S,4,4).
+    height ``z``) with in-plane unit ``direction2``.  ``angles`` may be a
+    scalar or an (S,) array; returns (4,4) or (S,4,4).
     """
     angles = np.asarray(angles, dtype=float)
     scalar = angles.ndim == 0
     angles = np.atleast_1d(angles)
 
     direction = np.array([direction2[0], direction2[1], 0.0])
-    point = np.array([point2[0], point2[1], 0.0])
+    point = np.array([point2[0], point2[1], z])
 
     # Rodrigues rotation matrices, batched over angles
     kx, ky, kz = direction
@@ -104,8 +106,17 @@ def fold_transforms(graph, theta):
         remaining = []
         for bend in pending:
             if bend.parent_panel in resolved:
-                rotation = rotation_about_line(bend.axis_point, bend.axis_dir, theta[bend.id])
-                transforms[bend.child_panel] = transforms[bend.parent_panel] @ rotation
+                # the hinge (neutral) axis lies on the mid-surface, i.e. at
+                # the same height the panels are embedded at
+                hinge = rotation_about_line(
+                    bend.axis_point, bend.axis_dir, theta[bend.id],
+                    z=graph.z_offset)
+                deduction = bend_deduction(graph, bend, theta[bend.id])
+                if deduction:
+                    slide = np.eye(4)
+                    slide[:2, 3] = deduction * normal_2d(bend.axis_dir)
+                    hinge = hinge @ slide
+                transforms[bend.child_panel] = transforms[bend.parent_panel] @ hinge
                 resolved.add(bend.child_panel)
                 progressed = True
             else:
@@ -115,6 +126,27 @@ def fold_transforms(graph, theta):
         pending = remaining
 
     return transforms
+
+
+def bend_deduction(graph, bend, angle):
+    """
+    Prismatic offset of the child frame away from the hinge at fold angle
+    ``angle``: the flat bend zone (length ``zone_width`` = BA) is shorter
+    than the two mid-plane setbacks it must serve (2 (r+t/2) tan(|a|/2)),
+    so rotating rigid panels about the virtual-corner hinge alone leaves
+    chained panels short by the classic bend deduction.  Zero when flat
+    (the pattern is exact) and at zone_width 0 (sharp synthetic parts).
+    """
+    if bend.zone_width <= 0.0:
+        return 0.0
+    magnitude = abs(float(angle))
+    if magnitude < 1e-9:
+        return 0.0
+    target = max(abs(bend.angle_target), 1e-9)
+    theta = min(magnitude, math.radians(150.0))
+    mid_radius = bend.inner_radius + graph.thickness / 2.0
+    consumed_zone = bend.zone_width * min(magnitude / target, 1.0)
+    return max(0.0, 2.0 * mid_radius * math.tan(theta / 2.0) - consumed_zone)
 
 
 def panel_points_3d(panel, z=0.0):

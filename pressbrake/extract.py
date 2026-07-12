@@ -24,9 +24,9 @@ from OCC.Core.TopAbs import TopAbs_WIRE
 from OCC.Core.TopExp import TopExp_Explorer
 from OCC.Core.TopoDS import topods
 
-from flatten import AdjacencyGraph, FaceTypes, wire_edges
+from flatten import AdjacencyGraph, FaceProperties, FaceTypes, face_surface_handle, wire_edges
 from pressbrake.kinematics import finalize_graph
-from pressbrake.model import Bend, KinematicGraph, Panel, polygon_area
+from pressbrake.model import Bend, KinematicGraph, Panel, polygon_area, polygon_centroid
 
 logger = logging.getLogger("pressbrake.extract")
 
@@ -157,23 +157,44 @@ def build_from_unfold(aag, graph, base_hash, surface_handle, transformations,
         norm = np.linalg.norm(direction)
         if norm < CHAIN_TOLERANCE:
             raise ExtractionError("degenerate bend axis")
+        direction = direction / norm
+
+        # Virtual-corner (mold line) hinge placement: extract_bend anchors
+        # the axis on the CENTER line of the bend allowance zone, but the
+        # line where the two mid-planes intersect sits at
+        # (r + t/2)*tan(|angle|/2) from the bend tangent, not BA/2.  Rotating
+        # rigid panels about the virtual corner reproduces the folded
+        # mid-PLANES exactly (validated at sub-mm scale by the thickness
+        # tests); the remaining error is a small in-plane conservatism near
+        # the corner.
+        shift = _virtual_corner_shift(
+            entity["angle"], entity["inner_radius"], thickness, k_factor)
+        child_centroid = polygon_centroid(panels[child_id].outline)
+        toward_child = np.array([-direction[1], direction[0]])
+        if float(toward_child @ (child_centroid - start)) < 0:
+            toward_child = -toward_child
+        start = start + shift * toward_child
 
         bends.append(Bend(
             id=len(bends),
             axis_point=start,
-            axis_dir=direction / norm,
+            axis_dir=direction,
             angle_target=ANGLE_SIGN * entity["angle"],
             inner_radius=entity["inner_radius"],
             k_factor=k_factor,
             length=entity["length"],
             parent_panel=parent_id,
             child_panel=child_id,
+            zone_width=abs(entity["angle"]) * (
+                entity["inner_radius"] + k_factor * thickness),
             face_hashes=tuple(sorted(component)),
         ))
-        bend_zones.append((parent_id, child_id, start, direction / norm, zone_polygons))
+        bend_zones.append((parent_id, child_id, start, direction, zone_polygons))
 
     kinematic = KinematicGraph(
         panels=panels, bends=bends, base_panel=0, thickness=thickness,
+        z_offset=_material_z_offset(
+            aag, base_hash, transformations, thickness),
         source=source,
     )
 
@@ -417,6 +438,86 @@ def _merge_bend_zones(kinematic, bend_zones):
         panel.holes = [
             np.asarray(ring.coords[:-1], dtype=float) for ring in merged.interiors
         ]
+
+
+def _material_z_offset(aag, base_hash, transformations, thickness):
+    """
+    Mid-surface height above the pattern plane: the unfolder flattens one
+    SKIN of the sheet (the base face), so the material occupies [0, t] on
+    one side of z=0.  The side is determined EMPIRICALLY by classifying
+    probe points against the solid (normal-sense/orientation-flag/transform
+    conventions vary between parts and proved unreliable); the winning
+    world-side direction is then mapped through the base alignment
+    transforms as a point pair.  Validated at thickness scale by the signed
+    parallel-plane test in tests/pressbrake/test_extract.py.
+    """
+    from OCC.Core.BRepClass3d import BRepClass3d_SolidClassifier
+    from OCC.Core.BRepGProp import brepgprop
+    from OCC.Core.GProp import GProp_GProps
+    from OCC.Core.gp import gp_Pnt
+    from OCC.Core.TopAbs import TopAbs_IN
+
+    base_node = aag.C1_faces.nodes[base_hash]
+    base_face = base_node["shape"]
+    normal = FaceProperties(face_surface_handle(base_face)).normal()
+    normal.Normalize()
+
+    properties = GProp_GProps()
+    brepgprop.SurfaceProperties(base_face, properties)
+    centre = properties.CentreOfMass()
+
+    directions = FaceProperties(face_surface_handle(base_face)).directions()
+    probe_offsets = [(0.0, 0.0), (5.0, 0.0), (-5.0, 0.0), (0.0, 5.0),
+                     (0.0, -5.0), (10.0, 10.0), (-10.0, -10.0)]
+
+    classifier = BRepClass3d_SolidClassifier(aag.shape)
+    depth = thickness / 4.0
+    material_sign = None
+    for du, dv in probe_offsets:
+        anchor = np.array([centre.X(), centre.Y(), centre.Z()])
+        anchor = anchor + du * np.array([directions[0].X(), directions[0].Y(),
+                                         directions[0].Z()])
+        anchor = anchor + dv * np.array([directions[1].X(), directions[1].Y(),
+                                         directions[1].Z()])
+        n = np.array([normal.X(), normal.Y(), normal.Z()])
+        for sign in (1.0, -1.0):
+            probe = anchor + sign * depth * n
+            classifier.Perform(gp_Pnt(*probe), 1e-4)
+            if classifier.State() == TopAbs_IN:
+                material_sign = sign
+                break
+        if material_sign is not None:
+            anchor_world = anchor
+            break
+    if material_sign is None:
+        raise ExtractionError("could not determine the material side of the sheet")
+
+    # map the material direction through the base alignment transforms as a
+    # point pair (no normal-transform sense ambiguity)
+    inside_world = anchor_world + material_sign * depth * np.array(
+        [normal.X(), normal.Y(), normal.Z()])
+    points = []
+    for world in (anchor_world, inside_world):
+        point = gp_Pnt(*world)
+        for transformation in transformations.get(base_hash, []):
+            point = point.Transformed(transformation)
+        points.append(np.array([point.X(), point.Y(), point.Z()]))
+    dz = points[1][2] - points[0][2]
+    return (thickness / 2.0) if dz > 0 else (-thickness / 2.0)
+
+
+def _virtual_corner_shift(angle, inner_radius, thickness, k_factor):
+    """
+    Distance from the bend-zone center line to the mid-plane intersection
+    line (virtual sharp corner), along the in-plane normal toward the child:
+    (r + t/2) * tan(|angle|/2) - BA/2, with BA = |angle| * (r + k*t).
+    Capped for near-hem angles (flagged infeasible elsewhere anyway).
+    """
+    theta = min(abs(angle), math.radians(150.0))
+    mid_radius = inner_radius + thickness / 2.0
+    allowance = theta * (inner_radius + k_factor * thickness)
+    shift = mid_radius * math.tan(theta / 2.0) - allowance / 2.0
+    return max(shift, 0.0)
 
 
 def _point2(point):
