@@ -373,6 +373,24 @@ def calculating_normal_on_edge(face, edge):
     return normal
 
 
+def calculating_normals_on_edge(face, edge):
+    """
+    :return: Normal vectors on a face at the first and last points of the edge
+    """
+    surface_handle = face_surface_handle(face)
+    first_uv_point = point_to_parameter(first_edge_point(edge), surface_handle)
+    last_uv_point = point_to_parameter(last_edge_point(edge), surface_handle)
+
+    first_normal = FaceProperties(surface_handle, first_uv_point).normal()
+    last_normal = FaceProperties(surface_handle, last_uv_point).normal()
+
+    if face.Orientation() != 0:
+        first_normal.Reverse()
+        last_normal.Reverse()
+
+    return first_normal, last_normal
+
+
 def calculating_normal_at_point(face, point):
     """
     :return: Normal vector on a face at a given point
@@ -415,6 +433,21 @@ def edge_tangent(edge, ignore_orientation=False):
         tangent.Reverse()
 
     return tangent
+
+
+def edge_tangents(edge, ignore_orientation=False):
+    """
+    :return: Tangent vectors at the first and last parameters of an edge
+    """
+    first_tangent = EdgeProperties(edge, use_first=True).tangent()
+    last_tangent = EdgeProperties(edge, use_first=False).tangent()
+
+    # Reverse if edge has reversed orientation
+    if edge.Orientation() == 0 and not ignore_orientation:
+        first_tangent.Reverse()
+        last_tangent.Reverse()
+
+    return first_tangent, last_tangent
 
 
 def bend_allowance(angle, inner_radius, thickness, k_factor):
@@ -736,18 +769,15 @@ class AdjacencyGraph(object):
                         if is_reversed:
                             edge.Reverse()
 
-                        normal_a = calculating_normal_on_edge(other_face, edge)
-                        normal_b = calculating_normal_on_edge(face, edge)
-                        tangent = edge_tangent(edge)
+                        first_normal_a, last_normal_a = calculating_normals_on_edge(other_face, edge)
+                        first_normal_b, last_normal_b = calculating_normals_on_edge(face, edge)
+                        first_tangent, last_tangent = edge_tangents(edge)
 
-                        # if is_reversed:
-                        #     tangent.Reverse()
-
-                        # compute dihedral_angle
-                        edge_angle = normal_b.AngleWithRef(normal_a, tangent)
-
-                        # if is_reversed:
-                        #     edge_angle *= -1
+                        # dihedral can vary along the edge on tapered/conical joints;
+                        # averaging both endpoints is more robust than a single sample
+                        first_edge_angle = first_normal_b.AngleWithRef(first_normal_a, first_tangent)
+                        last_edge_angle = last_normal_b.AngleWithRef(last_normal_a, last_tangent)
+                        edge_angle = (first_edge_angle + last_edge_angle) / 2.0
 
                         if edge_angle > 0.0:
                             edge_convexity = self.EdgeTypes.CONCAVE
