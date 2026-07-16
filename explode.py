@@ -8,6 +8,9 @@ from OCC.Core.TDataStd import TDataStd_Name
 from OCC.Core.TCollection import TCollection_ExtendedString, TCollection_AsciiString
 from OCC.Core.TopLoc import TopLoc_Location
 from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Transform
+from OCC.Core.TopExp import topexp
+from OCC.Core.TopTools import TopTools_IndexedMapOfShape
+from OCC.Core.TopAbs import TopAbs_FACE, TopAbs_EDGE
 
 import os
 import sys
@@ -26,6 +29,7 @@ import uuid
 
 # utils
 from utils import get_rondom_color, iterate_shape_parts, part_compound_shape, get_shape_solids, redirect_stdout, suppress_stdout_stderr, sanitize_filename, shape_hash
+from attributes import extract_face_attributes, label_entry
 from naming import generate_name
 
 import logging
@@ -49,6 +53,17 @@ class Part(object):
 
         self.solids = solids
         self.messages = messages
+
+        # XCAF attribute extraction (populated only when the TreeBuilder runs
+        # with extract_attributes=True). Plain Python data only: keeping OCC
+        # containers (TopTools_IndexedMapOfShape) alive on Part objects
+        # corrupts the XCAF document in pythonocc 7.9.
+        self.color = None                    # part-level (r, g, b) or None
+        self.face_attributes = None          # {face_id: FaceAttributes}
+        self.face_hash_by_id = None          # {face_id: shape_hash of transformed face}
+        self.face_id_by_source_hash = None   # {shape_hash of prototype face: face_id}
+        self.edge_id_by_source_hash = None   # {shape_hash of prototype edge: edge_id}
+        self.pmi = None                      # PmiData
 
         if not id:
             # uuid similar to NDB datastore
@@ -74,21 +89,31 @@ class Part(object):
 class TreeBuilder(object):
     """ A class for analyzing the assembly structure of a STEP file"""
 
-    def __init__(self, filename):
+    def __init__(self, filename, extract_attributes=False):
         self.filename = filename
         self.part_names = set()
         self.part_index = 0
         self.references = {}
 
+        self.extract_attributes = extract_attributes
+        self.color_tool = None
+        self.pmi_degraded = False
+        self.parts_by_label_entry = {}
+
+        self._read(filename, gdt=extract_attributes)
+
+    def _read(self, filename, gdt=False):
         # Create the document (handles are transparent since pythonocc 7.x;
         # no XCAFApp application needed for reading). Pass a plain str: the
         # pythonocc 7.9 TCollection_ExtendedString overload hard-crashes here.
         # The document must stay referenced on self or the shape tool ends up
-        # pointing into a freed document (empty GetFreeShapes).
+        # pointing into a freed document (empty GetFreeShapes). Built fresh
+        # per attempt: a Transfer that raises leaves a half-populated doc.
         self.doc = TDocStd_Document("MDTV-CAF")
         doc = self.doc
         self.shape_tool = XCAFDoc_DocumentTool.ShapeTool(doc.Main())
-        # self.color_tool = XCAFDoc_DocumentTool.ColorTool(doc.Main())
+        if self.extract_attributes:
+            self.color_tool = XCAFDoc_DocumentTool.ColorTool(doc.Main())
         # self.material_tool = XCAFDoc_DocumentTool.MaterialTool(doc.Main())
 
         with suppress_stdout_stderr():
@@ -99,9 +124,32 @@ class TreeBuilder(object):
             step_reader.SetNameMode(True)
             step_reader.SetMatMode(True)
 
+            if self.extract_attributes:
+                # Face names ride on subshape labels; off by default in OCCT.
+                Interface_Static.SetIVal("read.stepcaf.subshapes.name", 1)
+
+            if gdt:
+                # PMI / GD&T. View mode is what binds the semantic GD&T
+                # entities to the shapes they annotate; the graphical
+                # presentation shapes it also transfers are never read out.
+                step_reader.SetGDTMode(True)
+                step_reader.SetViewMode(True)
+
             status = step_reader.ReadFile(filename)
             if status == IFSelect_RetDone:
-                step_reader.Transfer(doc)
+                try:
+                    step_reader.Transfer(doc)
+                except Exception:
+                    if not gdt:
+                        raise
+                    # Some files crash OCCT's GD&T transfer (e.g. the
+                    # unguarded 'gp_Dir::CrossCross() - result vector has
+                    # zero norm' on degenerate annotation directions).
+                    # Retry without GD&T: geometry, colors and names still
+                    # load, only the PMI labels are lost.
+                    logger.warning("GD&T transfer failed; retrying without PMI")
+                    self.pmi_degraded = True
+                    return self._read(filename, gdt=False)
 
             XCAFDoc_ShapeTool.SetAutoNaming(True)
 
@@ -146,12 +194,17 @@ class TreeBuilder(object):
         part.reference = self.references[reference_hash]
         part.shape = shape
 
+        original = shape
+
         # Transformation paramaters of shape
         transformation = part.location.Transformation()
 
         # Build transformed shape
         shape = BRepBuilderAPI_Transform(shape, transformation).Shape()
         shapes.append(shape)
+
+        if self.extract_attributes:
+            self.mapSubShapes(part, original, shape)
 
         if display:
             color = get_rondom_color()
@@ -171,6 +224,54 @@ class TreeBuilder(object):
         #         display.DisplayColoredShape(shape, color)
 
         return shapes
+
+    def mapSubShapes(self, part, original, transformed):
+        """Bridge face identity across the placement transform and extract
+        the part's face colors and names.
+
+        XCAF colors/names/PMI reference faces of the prototype shape, while
+        the pipeline (AAG) works on the transformed copy whose faces hash
+        differently. BRepBuilderAPI_Transform rebuilds the shape structure-
+        preserving, so index i in TopExp.MapShapes order corresponds across
+        both shapes; that index is the stable public face_id.
+
+        Everything runs eagerly here, while the indexed maps are still local:
+        only plain Python data ends up on the Part (see Part.__init__).
+        """
+        original_faces = TopTools_IndexedMapOfShape()
+        topexp.MapShapes(original, TopAbs_FACE, original_faces)
+
+        transformed_faces = TopTools_IndexedMapOfShape()
+        topexp.MapShapes(transformed, TopAbs_FACE, transformed_faces)
+
+        if original_faces.Size() != transformed_faces.Size():
+            logger.warning(
+                "face count changed across transform for part %s (%s vs %s); "
+                "skipping attribute extraction for this part",
+                part.name, original_faces.Size(), transformed_faces.Size())
+            return
+
+        part.face_hash_by_id = {
+            i: shape_hash(transformed_faces.FindKey(i))
+            for i in range(1, transformed_faces.Size() + 1)
+        }
+        part.face_id_by_source_hash = {
+            shape_hash(original_faces.FindKey(i)): i
+            for i in range(1, original_faces.Size() + 1)
+        }
+
+        edge_map = TopTools_IndexedMapOfShape()
+        topexp.MapShapes(original, TopAbs_EDGE, edge_map)
+        part.edge_id_by_source_hash = {
+            shape_hash(edge_map.FindKey(i)): i
+            for i in range(1, edge_map.Size() + 1)
+        }
+
+        try:
+            part.color, part.face_attributes = extract_face_attributes(
+                self.shape_tool, self.color_tool, part.label, original_faces)
+        except Exception:
+            logger.exception("face attribute extraction failed for part %s", part.name)
 
     def getPart(self, label, level=0, root=None, location=TopLoc_Location(), ignore_duplicates=False, display=None):
         part = Part(label=label, level=level, root=root, index=self.part_index, location=location)
@@ -199,6 +300,9 @@ class TreeBuilder(object):
 
         part.name = label_name
         part.count = max(1, self.shape_tool.GetUsers(part.label, TDF_LabelSequence()))
+
+        if self.extract_attributes:
+            self.parts_by_label_entry[label_entry(part.label)] = part
 
         if part.is_assembly:
             part.components = self.getComponents(part, ignore_duplicates=ignore_duplicates, display=display)
@@ -274,6 +378,24 @@ class TreeBuilder(object):
         self.shape_tool.GetFreeShapes(labels)
         shape = self.findPart(labels.Value(1), index=index)
         return shape
+
+    def extract_attributes_tree(self, tree):
+        """Extract semantic PMI and link it to the parts of a computed tree
+        (face colors/names are already collected during compute). Separate
+        from compute() so the caller can time it as its own pipeline stage.
+        Never raises: attribute extraction must not break geometry
+        processing."""
+        if not self.extract_attributes:
+            return
+
+        if not self.pmi_degraded:
+            try:
+                from attributes import extract_pmi
+                extract_pmi(self.doc, self.shape_tool, self.parts_by_label_entry)
+            except ImportError:
+                pass  # semantic PMI extraction not available yet
+            except Exception:
+                logger.exception("PMI extraction failed")
 
 
 def write_step_file(a_shape, filename, application_protocol="AP203"):

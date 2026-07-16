@@ -118,6 +118,24 @@ class Job(object):
         return json.dumps(data, sort_keys=True, indent=2, separators=(',', ': '))
 
 
+class FaceAttributes(object):
+    """Attributes of a single face read from a STEP file (XCAF), addressed by
+    its stable face_id: the 1-based index of the face in TopExp.MapShapes
+    order within the owning part's shape."""
+
+    def __init__(self, face_id=None, color=None, name=None):
+        self.face_id = face_id
+        self.color = color      # (r, g, b) floats 0..1, or None
+        self.name = name        # face-level name from the CAD system, or None
+        self.pmi_refs = []      # ids of PMI entities annotating this face
+
+    def __dict__(self):
+        return dict(face_id=self.face_id, color=self.color, name=self.name, pmi_refs=self.pmi_refs)
+
+    def __repr__(self):
+        return json.dumps(self.__dict__(), sort_keys=True, indent=2, separators=(',', ': '))
+
+
 class Shape(object):
 
     class ShapeTypes(Enum):
@@ -137,6 +155,9 @@ class Shape(object):
 
         self.section = None
         self.pattern = None
+
+        self.faces = None
+        self.pmi = None
 
         self.messages = []
 

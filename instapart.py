@@ -226,6 +226,7 @@ if __name__ == '__main__':
 
     parser_auto.add_argument("--absolute_volume_threshold", help="Error threshold between the folded and unfolded shape volume in mm^3", type=float, default=5.0)
     parser_auto.add_argument("--relative_volume_threshold", help="Error threshold between the relative folded and unfolded shape", type=float, default=0.025)
+    parser_auto.add_argument("-a", "--attributes", help="extract face colors, names and semantic PMI/GD&T from the STEP file", action='store_true')
     parser_auto.add_argument("-d", "--display", help="display user interface", action='store_true')
     # parser_auto.add_argument('-c', '--config', default="config.xml", help='file to read the default config from')
 
@@ -357,7 +358,8 @@ if __name__ == '__main__':
                             export_template=template,
 
                             absolute_volume_threshold=args.absolute_volume_threshold,
-                            relative_volume_threshold=args.relative_volume_threshold
+                            relative_volume_threshold=args.relative_volume_threshold,
+                            extract_attributes=args.attributes
                         )
 
     # handle analysing of step files

@@ -170,6 +170,16 @@ class FileSchema(BaseSchema):
     path = fields.Str()
 
 
+class FaceAttributeSchema(Schema):
+    class Meta:
+        ordered = True
+
+    face_id = fields.Int()
+    color = fields.List(fields.Float(), allow_none=True)
+    name = fields.Str(allow_none=True)
+    pmi_refs = fields.List(fields.Int())
+
+
 class ShapeSchema(BaseSchema):
     type = EnumField()
 
@@ -185,6 +195,8 @@ class ShapeSchema(BaseSchema):
     pattern = fields.Nested(PatternSchema)
     features = fields.Nested(FeatureSchema, many=True)
 
+    faces = fields.Nested(FaceAttributeSchema, many=True)
+
     messages = fields.Nested("MessageSchema", many=True)
     files = fields.Nested("FileSchema", many=True)
 
@@ -198,6 +210,7 @@ class TreeSchema(BaseSchema):
     count = fields.Int()
 
     reference = fields.Int()
+    color = fields.List(fields.Float(), allow_none=True)
     components = fields.Nested("TreeSchema", many=True)
 
     is_assembly = fields.Bool()

@@ -89,6 +89,7 @@ def main(argv=None):
     parser.add_argument("--progress", default=None)
     parser.add_argument("--k-factor", type=float, default=0.5)
     parser.add_argument("--features", action="store_true")
+    parser.add_argument("--attributes", action="store_true")
     args = parser.parse_args(argv)
 
     os.makedirs(args.outdir, exist_ok=True)
@@ -121,6 +122,7 @@ def main(argv=None):
             align=True,
             k_factor=args.k_factor,
             check_features=args.features,
+            extract_attributes=args.attributes,
             export_names={},
             timings=timings,
         )
