@@ -38,3 +38,6 @@
 "description": "Recognized {} machining features",
 "value": feature_count
 
+"code": "010",
+"description": "PMI/GDT data could not be transferred; file was read without PMI",
+"value": None

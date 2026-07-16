@@ -175,6 +175,53 @@ class FileSchema(BaseSchema):
     path = fields.Str()
 
 
+class FaceAttributeSchema(Schema):
+    class Meta:
+        ordered = True
+
+    face_id = fields.Int()
+    color = fields.List(fields.Float(), allow_none=True)
+    name = fields.Str(allow_none=True)
+    pmi_refs = fields.List(fields.Int())
+
+
+class DimensionSchema(BaseSchema):
+    type = fields.Str(allow_none=True)
+    value = fields.Float(allow_none=True)
+    upper_tolerance = fields.Float(allow_none=True)
+    lower_tolerance = fields.Float(allow_none=True)
+    part_index = fields.Int(allow_none=True)
+    face_ids = fields.List(fields.Int())
+    secondary_face_ids = fields.List(fields.Int())
+    edge_ids = fields.List(fields.Int())
+
+
+class GeomToleranceSchema(BaseSchema):
+    type = fields.Str(allow_none=True)
+    value = fields.Float(allow_none=True)
+    type_of_value = fields.Str(allow_none=True)
+    part_index = fields.Int(allow_none=True)
+    datums = fields.List(fields.Str(), attribute="datum_names")
+    face_ids = fields.List(fields.Int())
+    edge_ids = fields.List(fields.Int())
+
+
+class DatumSchema(BaseSchema):
+    name = fields.Str(allow_none=True)
+    part_index = fields.Int(allow_none=True)
+    face_ids = fields.List(fields.Int())
+    edge_ids = fields.List(fields.Int())
+
+
+class PmiSchema(Schema):
+    class Meta:
+        ordered = True
+
+    dimensions = fields.Nested(DimensionSchema, many=True)
+    tolerances = fields.Nested(GeomToleranceSchema, many=True)
+    datums = fields.Nested(DatumSchema, many=True)
+
+
 class ShapeSchema(BaseSchema):
     type = EnumField()
 
@@ -190,6 +237,9 @@ class ShapeSchema(BaseSchema):
     pattern = fields.Nested(PatternSchema)
     features = fields.Nested(FeatureSchema, many=True)
 
+    faces = fields.Nested(FaceAttributeSchema, many=True)
+    pmi = fields.Nested(PmiSchema)
+
     messages = fields.Nested("MessageSchema", many=True)
     files = fields.Nested("FileSchema", many=True)
 
@@ -203,6 +253,7 @@ class TreeSchema(BaseSchema):
     count = fields.Int()
 
     reference = fields.Int()
+    color = fields.List(fields.Float(), allow_none=True)
     components = fields.Nested("TreeSchema", many=True)
 
     is_assembly = fields.Bool()

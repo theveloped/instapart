@@ -118,6 +118,110 @@ class Job(object):
         return json.dumps(data, sort_keys=True, indent=2, separators=(',', ': '))
 
 
+class FaceAttributes(object):
+    """Attributes of a single face read from a STEP file (XCAF), addressed by
+    its stable face_id: the 1-based index of the face in TopExp.MapShapes
+    order within the owning part's shape."""
+
+    def __init__(self, face_id=None, color=None, name=None):
+        self.face_id = face_id
+        self.color = color      # (r, g, b) floats 0..1, or None
+        self.name = name        # face-level name from the CAD system, or None
+        self.pmi_refs = []      # ids of PMI entities annotating this face
+
+    def __dict__(self):
+        return dict(face_id=self.face_id, color=self.color, name=self.name, pmi_refs=self.pmi_refs)
+
+    def __repr__(self):
+        return json.dumps(self.__dict__(), sort_keys=True, indent=2, separators=(',', ': '))
+
+
+class Dimension(object):
+    """Semantic dimension read from STEP PMI (e.g. a linear distance with
+    plus/minus tolerances), linked to the faces/edges it annotates."""
+
+    def __init__(self, id=None, dimension_type=None, value=None, upper_tolerance=None, lower_tolerance=None, part_index=None):
+        self.id = id
+        self.type = dimension_type      # XCAFDimTolObjects_DimensionType name
+        self.value = value
+        self.upper_tolerance = upper_tolerance
+        self.lower_tolerance = lower_tolerance
+        self.part_index = part_index
+        self.face_ids = []
+        self.secondary_face_ids = []
+        self.edge_ids = []
+
+    def __dict__(self):
+        return dict(id=self.id, type=self.type, value=self.value,
+                    upper_tolerance=self.upper_tolerance, lower_tolerance=self.lower_tolerance,
+                    part_index=self.part_index, face_ids=self.face_ids,
+                    secondary_face_ids=self.secondary_face_ids, edge_ids=self.edge_ids)
+
+    def __repr__(self):
+        return json.dumps(self.__dict__(), sort_keys=True, indent=2, separators=(',', ': '))
+
+
+class GeomTolerance(object):
+    """Semantic geometric tolerance (flatness, position, ...) read from STEP
+    PMI, with its datum references and annotated faces/edges."""
+
+    def __init__(self, id=None, tolerance_type=None, value=None, type_of_value=None, part_index=None):
+        self.id = id
+        self.type = tolerance_type      # XCAFDimTolObjects_GeomToleranceType name
+        self.value = value
+        self.type_of_value = type_of_value
+        self.part_index = part_index
+        self.datum_names = []
+        self.face_ids = []
+        self.edge_ids = []
+
+    def __dict__(self):
+        return dict(id=self.id, type=self.type, value=self.value, type_of_value=self.type_of_value,
+                    part_index=self.part_index, datums=self.datum_names,
+                    face_ids=self.face_ids, edge_ids=self.edge_ids)
+
+    def __repr__(self):
+        return json.dumps(self.__dict__(), sort_keys=True, indent=2, separators=(',', ': '))
+
+
+class Datum(object):
+    """Datum feature read from STEP PMI, linked to its faces/edges."""
+
+    def __init__(self, id=None, name=None, part_index=None):
+        self.id = id
+        self.name = name
+        self.part_index = part_index
+        self.face_ids = []
+        self.edge_ids = []
+
+    def __dict__(self):
+        return dict(id=self.id, name=self.name, part_index=self.part_index,
+                    face_ids=self.face_ids, edge_ids=self.edge_ids)
+
+    def __repr__(self):
+        return json.dumps(self.__dict__(), sort_keys=True, indent=2, separators=(',', ': '))
+
+
+class PmiData(object):
+    """All semantic PMI entities associated with one part (or one solid)."""
+
+    def __init__(self):
+        self.dimensions = []
+        self.tolerances = []
+        self.datums = []
+
+    def __bool__(self):
+        return bool(self.dimensions or self.tolerances or self.datums)
+
+    def __dict__(self):
+        return dict(dimensions=[d.__dict__() for d in self.dimensions],
+                    tolerances=[t.__dict__() for t in self.tolerances],
+                    datums=[d.__dict__() for d in self.datums])
+
+    def __repr__(self):
+        return json.dumps(self.__dict__(), sort_keys=True, indent=2, separators=(',', ': '))
+
+
 class Shape(object):
 
     class ShapeTypes(Enum):
@@ -137,6 +241,9 @@ class Shape(object):
 
         self.section = None
         self.pattern = None
+
+        self.faces = None
+        self.pmi = None
 
         self.messages = []
 

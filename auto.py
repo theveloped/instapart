@@ -43,6 +43,7 @@ from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Transform
 
 # Assembly tools
 from explode import TreeBuilder, count_parts, write_step_file
+from attributes import filter_pmi_for_solid
 from analyse import analyse_shape
 from flatten import fix_shape, AdjacencyGraph
 from features import recognize_cavities
@@ -171,6 +172,7 @@ def main(file_path, output_dir,
 
         absolute_volume_threshold=5.0,
         relative_volume_threshold=0.025,
+        extract_attributes=False,
         timings=None,
     ):
     timings = timings or NullTimer()
@@ -183,7 +185,7 @@ def main(file_path, output_dir,
 
     try:
         with timings.stage("import"), suppress_stdout_stderr():
-            builder = TreeBuilder(file_path)
+            builder = TreeBuilder(file_path, extract_attributes=extract_attributes)
             job_data.tree = builder.compute(ignore_duplicates=False, root=input_file, display=display)
 
     except Exception:
@@ -205,6 +207,18 @@ def main(file_path, output_dir,
             json.dump(job_parsed, json_file, indent=2, sort_keys=True)
 
         return export_names
+
+    if extract_attributes:
+        with timings.stage("attributes"):
+            builder.extract_attributes_tree(job_data.tree)
+
+        if builder.pmi_degraded:
+            logger.warning("PMI/GDT data could not be transferred; file was read without PMI")
+            job_data.messages.append({
+                "code": "010",
+                "description": "PMI/GDT data could not be transferred; file was read without PMI",
+                "value": None
+            })
 
     part_updates = {}
     for part in iterate_shape_parts(job_data.tree):
@@ -288,6 +302,27 @@ def main(file_path, output_dir,
             try:
                 # Tube parts
                 shape_data = Shape()
+
+                # Attach STEP face attributes (colors, names, PMI refs) to the
+                # AAG nodes and record the faces of this solid that carry any.
+                # Defensive: metadata must never break geometry processing.
+                if extract_attributes and part.face_attributes is not None:
+                    try:
+                        attributes_by_hash = {
+                            part.face_hash_by_id[face_id]: face_attributes
+                            for face_id, face_attributes in part.face_attributes.items()
+                            if face_id in part.face_hash_by_id
+                        }
+                        matched = aag.set_face_attributes(attributes_by_hash)
+                        # empty list = extraction ran, no attributed faces
+                        shape_data.faces = sorted(matched, key=lambda attributes: attributes.face_id)
+                        if part.pmi:
+                            shape_data.pmi = filter_pmi_for_solid(part.pmi, shape_data.faces)
+
+                    except Exception:
+                        traceback.print_exc()
+                        logger.warning("Could not attach face attributes to shape")
+
                 with timings.stage("classify"):
                     section_data = analyse_shape(aag, display=None)
 

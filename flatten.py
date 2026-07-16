@@ -720,7 +720,7 @@ class AdjacencyGraph(object):
 
             # add face + attributes to graph
             convexity, curvature, radii, directions = face_convexity(face)
-            graph_faces.add_node(face_hash, shape=face, convexity=convexity, curvature=curvature, radii=radii, directions=directions, bend_radius=None, k_factor=None)
+            graph_faces.add_node(face_hash, shape=face, convexity=convexity, curvature=curvature, radii=radii, directions=directions, bend_radius=None, k_factor=None, attributes=None)
             face_node = graph_faces.nodes[face_hash]
 
             # Loop over all edges of current face
@@ -791,6 +791,26 @@ class AdjacencyGraph(object):
                     graph_edges[first_hash][last_hash][edge_hash]["angle"] = edge_angle
                     graph_edges[first_hash][last_hash][edge_hash]["convexity"] = edge_convexity
 
+
+    def set_face_attributes(self, attributes_by_hash):
+        """Attach STEP-derived FaceAttributes (color, name, PMI refs) to the
+        face nodes of the built graphs, keyed by shape_hash of the face.
+
+        :param attributes_by_hash: {shape_hash: FaceAttributes}
+        :return: list of FaceAttributes that matched a face of this shape
+        """
+        matched = []
+
+        for face_hash, face_attributes in attributes_by_hash.items():
+            if self.C0_faces is None or face_hash not in self.C0_faces:
+                continue
+
+            matched.append(face_attributes)
+            for graph in (self.C0_faces, self.C1_faces, self.C2_faces):
+                if graph is not None and face_hash in graph:
+                    graph.nodes[face_hash]["attributes"] = face_attributes
+
+        return matched
 
     def get_connected_subgraph(self, base_hash, ignore_complex=False, display=False):
         """
