@@ -43,6 +43,7 @@ from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Transform
 
 # Assembly tools
 from explode import TreeBuilder, count_parts, write_step_file
+from attributes import filter_pmi_for_solid
 from analyse import analyse_shape
 from flatten import fix_shape, AdjacencyGraph
 from cycad import Pattern, Entity

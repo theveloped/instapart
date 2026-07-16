@@ -53,6 +53,10 @@ def run_checks(entry, result, golden_metrics=None):
     if entry.get("filename_thickness") is not None:
         checks.append(check_rolled_thickness(entry, result))
 
+    if entry.get("attributes"):
+        checks.extend(check_face_attributes(entry, job))
+        checks.extend(check_pmi(entry, job))
+
     if entry.get("category") == "tube":
         checks.append(check_tube(result))
 
@@ -276,6 +280,63 @@ def check_rolled_thickness(entry, result):
         return _result("rolled_thickness", "fail", expected=truth, detail="no thickness extracted")
     status = "pass" if abs(measured - truth) <= 0.1 else "fail"
     return _result("rolled_thickness", status, measured=measured, expected=truth)
+
+
+def _all_shapes(job):
+    shapes = []
+
+    def walk(node):
+        if not isinstance(node, dict):
+            return
+        shapes.extend(node.get("shapes") or [])
+        for comp in node.get("components") or []:
+            walk(comp)
+
+    walk(job.get("tree") or {})
+    return shapes
+
+
+def check_face_attributes(entry, job):
+    """Attribute-enabled entries: shapes[].faces must be present (a list) and
+    optionally match the frozen count of faces carrying a color."""
+    checks = []
+    shapes = _all_shapes(job)
+
+    missing = [s for s in shapes if not isinstance(s.get("faces"), list)]
+    checks.append(_result("face_attributes_present", "fail" if missing else "pass",
+                          measured=len(shapes) - len(missing), expected=len(shapes)))
+
+    expected = entry.get("expected_colored_faces")
+    if expected is not None:
+        colored = sum(1 for s in shapes for f in s.get("faces") or [] if f.get("color"))
+        checks.append(_result("colored_faces_frozen", "pass" if colored == expected else "fail",
+                              measured=colored, expected=expected))
+
+    return checks
+
+
+def check_pmi(entry, job):
+    """Attribute-enabled entries: optional frozen counts of semantic PMI
+    entities across all shapes."""
+    checks = []
+    shapes = _all_shapes(job)
+
+    counts = {"dimensions": 0, "tolerances": 0, "datums": 0}
+    for shape in shapes:
+        pmi = shape.get("pmi") or {}
+        for key in counts:
+            counts[key] += len(pmi.get(key) or [])
+
+    for key, manifest_key in (("dimensions", "expected_pmi_dimensions"),
+                              ("tolerances", "expected_pmi_tolerances"),
+                              ("datums", "expected_pmi_datums")):
+        expected = entry.get(manifest_key)
+        if expected is not None:
+            checks.append(_result("pmi_%s_frozen" % key,
+                                  "pass" if counts[key] == expected else "fail",
+                                  measured=counts[key], expected=expected))
+
+    return checks
 
 
 def check_tube(result):

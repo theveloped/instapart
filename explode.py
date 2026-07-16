@@ -29,7 +29,7 @@ import uuid
 
 # utils
 from utils import get_rondom_color, iterate_shape_parts, part_compound_shape, get_shape_solids, redirect_stdout, suppress_stdout_stderr, sanitize_filename, shape_hash
-from attributes import extract_face_attributes, label_entry
+from attributes import extract_face_attributes, extract_pmi, label_entry
 from naming import generate_name
 
 import logging
@@ -203,7 +203,9 @@ class TreeBuilder(object):
         shape = BRepBuilderAPI_Transform(shape, transformation).Shape()
         shapes.append(shape)
 
-        if self.extract_attributes:
+        # Only reference parts are processed downstream; duplicates share the
+        # prototype label, so mapping/extracting for them is wasted work.
+        if self.extract_attributes and part.reference == part.index:
             self.mapSubShapes(part, original, shape)
 
         if display:
@@ -302,7 +304,9 @@ class TreeBuilder(object):
         part.count = max(1, self.shape_tool.GetUsers(part.label, TDF_LabelSequence()))
 
         if self.extract_attributes:
-            self.parts_by_label_entry[label_entry(part.label)] = part
+            # setdefault: instances share the prototype label; keep the first
+            # (reference) part so PMI resolves against the processed instance
+            self.parts_by_label_entry.setdefault(label_entry(part.label), part)
 
         if part.is_assembly:
             part.components = self.getComponents(part, ignore_duplicates=ignore_duplicates, display=display)
@@ -390,10 +394,7 @@ class TreeBuilder(object):
 
         if not self.pmi_degraded:
             try:
-                from attributes import extract_pmi
                 extract_pmi(self.doc, self.shape_tool, self.parts_by_label_entry)
-            except ImportError:
-                pass  # semantic PMI extraction not available yet
             except Exception:
                 logger.exception("PMI extraction failed")
 

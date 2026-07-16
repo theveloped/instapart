@@ -34,3 +34,6 @@
 "description": "Features detected on both sides of part. Only one side visible in 2D.",
 "value": None
 
+"code": "009",
+"description": "PMI/GDT data could not be transferred; file was read without PMI",
+"value": None

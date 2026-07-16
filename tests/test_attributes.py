@@ -11,6 +11,7 @@ import pytest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 COLOR_FIXTURE = os.path.join(REPO_ROOT, "examples", "colors", "colored_box.step")
+PMI_FIXTURE = os.path.join(REPO_ROOT, "examples", "pmi", "pmi_box.step")
 PLAIN_FIXTURE = os.path.join(REPO_ROOT, "examples", "parts", "SmartPart_01.stp")
 
 RED = (1.0, 0.0, 0.0)
@@ -18,6 +19,8 @@ GREEN = (0.0, 1.0, 0.0)
 
 needs_color_fixture = pytest.mark.skipif(
     not os.path.isfile(COLOR_FIXTURE), reason="color fixture missing")
+needs_pmi_fixture = pytest.mark.skipif(
+    not os.path.isfile(PMI_FIXTURE), reason="pmi fixture missing")
 needs_plain_fixture = pytest.mark.skipif(
     not os.path.isfile(PLAIN_FIXTURE), reason="example part missing")
 
@@ -133,6 +136,87 @@ def test_auto_pipeline_flag_off_is_neutral(tmp_path):
     assert shape["faces"] is None
     assert shape.get("pmi") is None
     assert job["tree"]["color"] is None
+
+
+@needs_pmi_fixture
+def test_pmi_dimension_extracted():
+    """The AP242 fixture carries one semantic linear-distance dimension
+    (20.0 +0.1/-0.05) between face 1 and face 2."""
+    _, tree = build_tree(PMI_FIXTURE)
+    part = reference_parts(tree)[0]
+
+    assert part.pmi is not None
+    assert len(part.pmi.dimensions) == 1
+    assert not part.pmi.tolerances and not part.pmi.datums
+
+    dimension = part.pmi.dimensions[0]
+    assert dimension.type == "Location_LinearDistance"
+    assert dimension.value == pytest.approx(20.0)
+    assert dimension.upper_tolerance == pytest.approx(0.1)
+    # OCCT returns the lower tolerance as a magnitude after the STEP roundtrip
+    assert abs(dimension.lower_tolerance) == pytest.approx(0.05)
+    assert dimension.face_ids == [1]
+    assert dimension.secondary_face_ids == [2]
+    assert dimension.part_index == part.reference
+
+    # both annotated faces are tagged with the dimension's PMI id
+    assert part.face_attributes[1].pmi_refs == [dimension.id]
+    assert part.face_attributes[2].pmi_refs == [dimension.id]
+
+
+@needs_pmi_fixture
+def test_pmi_exported_to_json(tmp_path):
+    import auto
+
+    auto.main(PMI_FIXTURE, str(tmp_path), extract_attributes=True, export_names={})
+
+    with open(tmp_path / "pmi_box.json", encoding="utf-8") as fh:
+        job = json.load(fh)
+
+    shape = job["tree"]["shapes"][0]
+    assert shape["pmi"]["dimensions"], "dimension missing from JSON"
+    dimension = shape["pmi"]["dimensions"][0]
+    assert dimension["value"] == pytest.approx(20.0)
+    assert dimension["face_ids"] == [1]
+    assert dimension["secondary_face_ids"] == [2]
+
+    face_ids_with_pmi = [f["face_id"] for f in shape["faces"] if f["pmi_refs"]]
+    assert face_ids_with_pmi == [1, 2]
+
+    # cross reference: pmi_refs point at the exported dimension id
+    assert shape["faces"][0]["pmi_refs"] == [dimension["id"]]
+
+
+@needs_pmi_fixture
+def test_gdt_transfer_crash_degrades_gracefully(monkeypatch, tmp_path):
+    """The known OCCT GD&T-transfer crash must fall back to a PMI-less read:
+    geometry and colors intact, pmi_degraded flagged, message 009 in JSON."""
+    import auto
+    from OCC.Core.STEPCAFControl import STEPCAFControl_Reader
+
+    original = STEPCAFControl_Reader.Transfer
+    calls = {"count": 0}
+
+    def flaky_transfer(self, *args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("gp_Dir::CrossCross() - result vector has zero norm")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(STEPCAFControl_Reader, "Transfer", flaky_transfer)
+
+    auto.main(PMI_FIXTURE, str(tmp_path), extract_attributes=True, export_names={})
+
+    assert calls["count"] == 2, "expected a retry without GD&T"
+
+    with open(tmp_path / "pmi_box.json", encoding="utf-8") as fh:
+        job = json.load(fh)
+
+    assert any(m["code"] == 9 for m in job["messages"])
+    shape = job["tree"]["shapes"][0]
+    assert shape["pmi"] is None
+    # geometry survived the fallback
+    assert shape["volume"] == pytest.approx(20.0 * 30.0 * 40.0, rel=1e-3)
 
 
 @needs_color_fixture

@@ -59,6 +59,8 @@ def run_one(entry, run_dir, jobs_env, timeout_scale=1.0, k_factor=0.5, features=
            "--k-factor", str(k_factor)]
     if features:
         cmd.append("--features")
+    if entry.get("attributes"):
+        cmd.append("--attributes")
 
     timeout = entry.get("timeout_s", 120) * timeout_scale
     record = {"path": rel, "category": entry.get("category"),
