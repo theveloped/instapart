@@ -108,6 +108,16 @@ def extract_face_attributes(shape_tool, color_tool, label, face_map):
         if face_id > 0:
             get(face_id).name = name
 
+    # A single name stamped on every face of the shape is an exporter
+    # artifact (e.g. CATIA writes its body name, 'PartBody', on each face)
+    # and carries no face-level information — drop it.
+    names = [a.name for a in attributes.values() if a.name]
+    if names and len(names) == face_map.Size() and len(set(names)) == 1:
+        for face_id in list(attributes):
+            attributes[face_id].name = None
+            if attributes[face_id].color is None and not attributes[face_id].pmi_refs:
+                del attributes[face_id]
+
     return part_color, attributes
 
 
@@ -131,12 +141,17 @@ def _resolve_references(shape_tool, parts_by_label_entry, ref_labels):
     Reference labels are XCAF subshape labels (children of the owning shape
     label) or the shape label itself. Faces/edges resolve to their stable
     1-based ids via the hash indexes built by TreeBuilder.mapSubShapes.
+
+    One PMI entity can reference shapes of several parts (e.g. a tolerance
+    spanning an assembly). Ids are only meaningful relative to their own
+    part, so references are resolved per owner and the dominant owner (most
+    resolved references, first seen on a tie) wins; the rest is dropped with
+    a debug log rather than mixed into the wrong part's id space.
     """
     from utils import shape_hash
 
-    part = None
-    face_ids = []
-    edge_ids = []
+    owners = []                 # first-seen order
+    ids_by_owner = {}           # part -> (face_ids, edge_ids)
 
     for i in range(1, ref_labels.Length() + 1):
         ref_label = ref_labels.Value(i)
@@ -147,7 +162,10 @@ def _resolve_references(shape_tool, parts_by_label_entry, ref_labels):
         if owner is None:
             continue
 
-        part = part or owner
+        if owner not in ids_by_owner:
+            owners.append(owner)
+            ids_by_owner[owner] = ([], [])
+        face_ids, edge_ids = ids_by_owner[owner]
 
         shape = shape_tool.GetShape(ref_label)
         if shape is None or shape.IsNull():
@@ -163,6 +181,14 @@ def _resolve_references(shape_tool, parts_by_label_entry, ref_labels):
             if edge_id:
                 edge_ids.append(edge_id)
 
+    if not owners:
+        return None, [], []
+
+    part = max(owners, key=lambda owner: sum(map(len, ids_by_owner[owner])))
+    if len(owners) > 1:
+        logger.debug("PMI references span %s parts; keeping %s", len(owners), part.name)
+
+    face_ids, edge_ids = ids_by_owner[part]
     return part, face_ids, edge_ids
 
 
@@ -212,9 +238,15 @@ def extract_pmi(doc, shape_tool, parts_by_label_entry):
             logger.warning("could not read dimension object %s", i)
             continue
 
+        dimension_type = _DIMENSION_TYPES.get(int(dimension_object.GetType()))
+        if dimension_type == "DimensionPresentation":
+            # Placeholder labels binding tessellated/graphical callouts to
+            # shapes (value 0, no semantics) — not parsable PMI.
+            continue
+
         pmi_id += 1
         dimension = Dimension(id=pmi_id,
-                              dimension_type=_DIMENSION_TYPES.get(int(dimension_object.GetType())),
+                              dimension_type=dimension_type,
                               value=dimension_object.GetValue())
 
         if dimension_object.IsDimWithPlusMinusTolerance():
@@ -232,6 +264,11 @@ def extract_pmi(doc, shape_tool, parts_by_label_entry):
         second_part, second_face_ids, _ = _resolve_references(shape_tool, parts_by_label_entry, second)
         part = part or second_part
 
+        if second_part is not None and second_part is not part:
+            # ids are only meaningful within one part's id space
+            logger.debug("dimension %s spans two parts; dropping secondary refs", pmi_id)
+            second_face_ids = []
+
         dimension.face_ids = face_ids
         dimension.secondary_face_ids = second_face_ids
         dimension.edge_ids = edge_ids
@@ -240,8 +277,7 @@ def extract_pmi(doc, shape_tool, parts_by_label_entry):
             dimension.part_index = part.reference
             _part_pmi(part).dimensions.append(dimension)
             _tag_faces(part, face_ids, pmi_id)
-            if second_part:
-                _tag_faces(second_part, second_face_ids, pmi_id)
+            _tag_faces(part, second_face_ids, pmi_id)
 
     # ── geometric tolerances ─────────────────────────────────────────────
     tolerance_labels = TDF_LabelSequence()
@@ -293,8 +329,14 @@ def extract_pmi(doc, shape_tool, parts_by_label_entry):
             _tag_faces(part, face_ids, pmi_id)
 
     # ── datums ───────────────────────────────────────────────────────────
+    # XCAF stores one datum label per (tolerance, datum) association, so the
+    # same datum feature shows up once per referencing tolerance. Merge by
+    # name within a part, unioning the annotated faces (multi-target datum
+    # features legitimately reference several faces).
     datum_labels = TDF_LabelSequence()
     dimtol_tool.GetDatumLabels(datum_labels)
+
+    merged = {}   # (id(part), name) -> (part, Datum)
 
     for i in range(1, datum_labels.Length() + 1):
         label = datum_labels.Value(i)
@@ -304,21 +346,28 @@ def extract_pmi(doc, shape_tool, parts_by_label_entry):
             logger.warning("could not read datum object %s", i)
             continue
 
-        pmi_id += 1
         name = datum_object.GetName()
-        datum = Datum(id=pmi_id, name=name.ToCString() if name is not None else None)
+        name = name.ToCString() if name is not None else None
 
         first, second = TDF_LabelSequence(), TDF_LabelSequence()
         dimtol_tool.GetRefShapeLabel(label, first, second)
         part, face_ids, edge_ids = _resolve_references(shape_tool, parts_by_label_entry, first)
 
-        datum.face_ids = face_ids
-        datum.edge_ids = edge_ids
+        if part is None:
+            continue
 
-        if part:
-            datum.part_index = part.reference
-            _part_pmi(part).datums.append(datum)
-            _tag_faces(part, face_ids, pmi_id)
+        key = (id(part), name)
+        if key not in merged:
+            pmi_id += 1
+            merged[key] = (part, Datum(id=pmi_id, name=name, part_index=part.reference))
+
+        datum = merged[key][1]
+        datum.face_ids = sorted(set(datum.face_ids) | set(face_ids))
+        datum.edge_ids = sorted(set(datum.edge_ids) | set(edge_ids))
+
+    for part, datum in merged.values():
+        _part_pmi(part).datums.append(datum)
+        _tag_faces(part, datum.face_ids, datum.id)
 
 
 def filter_pmi_for_solid(part_pmi, matched_faces):

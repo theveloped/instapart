@@ -306,7 +306,7 @@ def main(file_path, output_dir,
                 # Attach STEP face attributes (colors, names, PMI refs) to the
                 # AAG nodes and record the faces of this solid that carry any.
                 # Defensive: metadata must never break geometry processing.
-                if extract_attributes and part.face_attributes:
+                if extract_attributes and part.face_attributes is not None:
                     try:
                         attributes_by_hash = {
                             part.face_hash_by_id[face_id]: face_attributes
@@ -314,6 +314,7 @@ def main(file_path, output_dir,
                             if face_id in part.face_hash_by_id
                         }
                         matched = aag.set_face_attributes(attributes_by_hash)
+                        # empty list = extraction ran, no attributed faces
                         shape_data.faces = sorted(matched, key=lambda attributes: attributes.face_id)
                         if part.pmi:
                             shape_data.pmi = filter_pmi_for_solid(part.pmi, shape_data.faces)

@@ -14,8 +14,30 @@ COLOR_FIXTURE = os.path.join(REPO_ROOT, "examples", "colors", "colored_box.step"
 PMI_FIXTURE = os.path.join(REPO_ROOT, "examples", "pmi", "pmi_box.step")
 PLAIN_FIXTURE = os.path.join(REPO_ROOT, "examples", "parts", "SmartPart_01.stp")
 
+# Real CAD exports (examples/color, examples/nist) are stored in Git LFS;
+# without `git lfs pull` the working tree holds pointer stubs.
+COLOR_REAL = os.path.join(REPO_ROOT, "examples", "color", "model3.stp")
+NIST_CTC_05 = os.path.join(REPO_ROOT, "examples", "nist", "nist_ctc_05_asme1_ap242.stp")
+NIST_CTC_05_AP203 = os.path.join(REPO_ROOT, "examples", "nist", "nist_ctc_05_asme1_ap203.stp")
+NIST_FTC_08_TESS = os.path.join(REPO_ROOT, "examples", "nist", "nist_ftc_08_asme1_ap242-2.stp")
+NIST_FTC_08_RC = os.path.join(REPO_ROOT, "examples", "nist", "nist_ftc_08_asme1_rc.stp")
+
 RED = (1.0, 0.0, 0.0)
 GREEN = (0.0, 1.0, 0.0)
+
+
+def _has_step_content(path):
+    """True when the file exists and is real STEP data, not an LFS pointer."""
+    if not os.path.isfile(path):
+        return False
+    with open(path, "rb") as fh:
+        return not fh.read(40).startswith(b"version https://git-lfs")
+
+
+def needs(path, what):
+    return pytest.mark.skipif(not _has_step_content(path),
+                              reason="%s missing (git lfs pull?)" % what)
+
 
 needs_color_fixture = pytest.mark.skipif(
     not os.path.isfile(COLOR_FIXTURE), reason="color fixture missing")
@@ -240,3 +262,79 @@ def test_aag_nodes_carry_attributes():
     assert sorted(a.face_id for a in matched) == [1, 3]
     tagged = [h for h, data in aag.C0_faces.nodes(data=True) if data.get("attributes")]
     assert len(tagged) == 2
+
+
+# ── real CAD exports (Git LFS content) ──────────────────────────────────
+
+@needs(COLOR_REAL, "examples/color/model3.stp")
+def test_real_color_part_marker_faces():
+    """model3.stp: full-body default blue plus 5 dark-blue marker faces —
+    the marker faces must be distinguishable by their color."""
+    _, tree = build_tree(COLOR_REAL)
+    part = reference_parts(tree)[0]
+
+    assert part.color is not None
+    colored = [a for a in part.face_attributes.values() if a.color]
+    assert len(colored) == 59
+
+    marker = (0.078, 0.195, 0.402)
+    markers = [a.face_id for a in colored
+               if a.color == pytest.approx(marker, abs=1e-3)]
+    assert len(markers) == 5
+
+
+@needs(NIST_CTC_05, "NIST CTC-05 AP242")
+def test_nist_ctc05_semantic_pmi():
+    """CTC-05: known GD&T content — runouts on datums A/B, perpendicularity,
+    a Ø10 size dimension — with resolved face links."""
+    _, tree = build_tree(NIST_CTC_05)
+    part = reference_parts(tree)[0]
+
+    assert part.pmi is not None
+    assert len(part.pmi.dimensions) == 6
+    assert len(part.pmi.tolerances) == 10
+    assert len(part.pmi.datums) == 2
+
+    diameter = next(d for d in part.pmi.dimensions if d.type == "Size_Diameter")
+    assert diameter.value == pytest.approx(10.0)
+    assert diameter.face_ids, "diameter dimension lost its face link"
+
+    types = {t.type for t in part.pmi.tolerances}
+    assert {"CircularRunout", "Perpendicularity", "TotalRunout"} <= types
+
+    runout = next(t for t in part.pmi.tolerances if t.type == "CircularRunout")
+    assert runout.datum_names == ["A", "B"]
+    assert runout.face_ids
+
+    for tolerance in part.pmi.tolerances:
+        assert tolerance.value is not None and tolerance.value > 0
+        assert tolerance.face_ids or tolerance.edge_ids
+
+    assert {d.name for d in part.pmi.datums} == {"A", "B"}
+
+
+@needs(NIST_CTC_05_AP203, "NIST CTC-05 AP203")
+def test_nist_ap203_yields_no_pmi():
+    """AP203 exports carry no semantic PMI — must load cleanly and empty."""
+    builder, tree = build_tree(NIST_CTC_05_AP203)
+    assert not builder.pmi_degraded
+    for part in reference_parts(tree):
+        assert part.pmi is None
+
+
+@needs(NIST_FTC_08_TESS, "NIST FTC-08 tessellated")
+def test_tessellated_pmi_yields_no_phantom_dimensions():
+    """Tessellated/graphical PMI files produce presentation-only XCAF
+    dimension labels (value 0, no semantics) — these must be filtered."""
+    _, tree = build_tree(NIST_FTC_08_TESS)
+    for part in reference_parts(tree):
+        assert part.pmi is None
+
+
+@needs(NIST_FTC_08_RC, "NIST FTC-08 rc")
+def test_uniform_placeholder_face_names_dropped():
+    """CATIA stamps its body name ('PartBody') on every face — a name that
+    covers all faces of a shape carries no information and must be dropped."""
+    _, tree = build_tree(NIST_FTC_08_RC)
+    for part in reference_parts(tree):
+        assert not any(a.name for a in (part.face_attributes or {}).values())
