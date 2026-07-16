@@ -45,6 +45,7 @@ from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Transform
 from explode import TreeBuilder, count_parts, write_step_file
 from analyse import analyse_shape
 from flatten import fix_shape, AdjacencyGraph
+from features import recognize_cavities
 from cycad import Pattern, Entity
 from models import Job, Shape
 from schemas import JobSchema, TreeSchema, ShapeSchema, SectionSchema
@@ -112,6 +113,30 @@ logger = logging.getLogger()
 #     return export_names
 
 
+
+
+def _attach_cavities(aag, shape_data):
+    """Run the CNC recognizer; attach features + message 009 if any.
+
+    :return: True when machining features were recognized and attached.
+    """
+    try:
+        cavities = recognize_cavities(aag)
+    except Exception:
+        traceback.print_exc()
+        return False
+
+    if not cavities:
+        return False
+
+    shape_data.type = Shape.ShapeTypes.OTHER
+    shape_data.features = cavities
+    shape_data.messages.append({
+        "code": "009",
+        "description": "Recognized {} machining features".format(len(cavities)),
+        "value": len(cavities),
+    })
+    return True
 
 
 # def main(step_path, part_index=None, display=None, repair=True):
@@ -552,6 +577,11 @@ def main(file_path, output_dir,
                         continue
 
                     else:
+                        if check_features and _attach_cavities(aag, shape_data):
+                            shape_data.files = solid_files
+                            part_solids.append(shape_data)
+                            continue
+
                         logger.error("Could not flatten shape")
 
                         message = {
@@ -593,6 +623,11 @@ def main(file_path, output_dir,
 
                 # Part is a tube part
                 else:
+                    if check_features and _attach_cavities(aag, shape_data):
+                        shape_data.files = solid_files
+                        part_solids.append(shape_data)
+                        continue
+
                     logger.error("Shape type is not recognized")
 
                     message = {

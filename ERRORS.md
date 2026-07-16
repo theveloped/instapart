@@ -34,3 +34,7 @@
 "description": "Features detected on both sides of part. Only one side visible in 2D.",
 "value": None
 
+"code": "009",
+"description": "Recognized {} machining features",
+"value": feature_count
+

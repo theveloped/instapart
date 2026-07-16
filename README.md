@@ -72,4 +72,7 @@ areas (hash-ordered accumulation); structural metrics are deterministic.
 
 ## Error codes
 
-See `ERRORS.md` (codes 000–008 embedded in the output JSON).
+See `ERRORS.md` (codes 000–009 embedded in the output JSON). Code 009 is
+emitted for machined/CNC solids that fail sheet and tube classification: the
+recognizer reports the recognized hole features (through/blind holes,
+counterbores, countersinks) on an `OTHER`-typed shape.

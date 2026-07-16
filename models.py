@@ -198,6 +198,10 @@ class Section(object):
 class Feature(object):
 
     class FeatureTypes(Enum):
+        POCKET = 7
+        COUNTERBORE = 6
+        BLIND_HOLE = 5
+        THROUGH_HOLE = 4
         COUNTERSINK = 3
         EXTRUSION = 2
         EMBOSSING = 1
@@ -220,6 +224,7 @@ class Feature(object):
         self.base_b = base_b
 
         self.projections = None
+        self._feature_type = feature_type
 
 
     def reverse(self):
@@ -232,6 +237,9 @@ class Feature(object):
 
     @property
     def type(self):
+        if self._feature_type is not None:
+            return self._feature_type
+
         if self.embossing:
             return Feature.FeatureTypes.EMBOSSING
 
