@@ -1,0 +1,2 @@
+examples/nist/** filter=lfs diff=lfs merge=lfs -text
+examples/color/** filter=lfs diff=lfs merge=lfs -text

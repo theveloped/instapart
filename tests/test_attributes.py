@@ -190,7 +190,7 @@ def test_pmi_exported_to_json(tmp_path):
 @needs_pmi_fixture
 def test_gdt_transfer_crash_degrades_gracefully(monkeypatch, tmp_path):
     """The known OCCT GD&T-transfer crash must fall back to a PMI-less read:
-    geometry and colors intact, pmi_degraded flagged, message 009 in JSON."""
+    geometry and colors intact, pmi_degraded flagged, message 010 in JSON."""
     import auto
     from OCC.Core.STEPCAFControl import STEPCAFControl_Reader
 
@@ -212,7 +212,7 @@ def test_gdt_transfer_crash_degrades_gracefully(monkeypatch, tmp_path):
     with open(tmp_path / "pmi_box.json", encoding="utf-8") as fh:
         job = json.load(fh)
 
-    assert any(m["code"] == 9 for m in job["messages"])
+    assert any(m["code"] == 10 for m in job["messages"])
     shape = job["tree"]["shapes"][0]
     assert shape["pmi"] is None
     # geometry survived the fallback

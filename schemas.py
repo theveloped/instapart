@@ -113,6 +113,11 @@ class FeatureSchema(BaseSchema):
     top = fields.Bool()
     bottom = fields.Bool()
     value = fields.Float()
+    diameter = fields.Float()
+    depth = fields.Float()
+    axis = fields.List(fields.Float())
+    angle = fields.Float()
+    counterbore_diameter = fields.Float()
 
 
 class LabelSchema(BaseSchema):
