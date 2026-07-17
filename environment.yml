@@ -7,6 +7,8 @@ dependencies:
   - numpy
   - scikit-learn
   - networkx>=3.0
+  - shapely>=2.0
+  - matplotlib
   - pillow>=10
   - lxml
   - pyyaml
